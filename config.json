@@ -1,0 +1,8 @@
+{
+    "source_image": "input/source_images/example.png",
+    "palette_file": "input/palettes/example_palette.json",
+    "output_prefix": "venus_test",
+    "gif_frame_duration_ms": 120,
+    "random_seed": 42
+}
+
