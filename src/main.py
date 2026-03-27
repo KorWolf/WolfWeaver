@@ -5,6 +5,12 @@ from src.color_stats import (
     export_color_stats_to_csv,
     extract_color_frequencies,
 )
+from src.difference import (
+    build_difference_matrix,
+    build_long_difference_table,
+    export_difference_preview,
+    export_long_difference_preview,
+)
 from src.image_io import get_image_dimensions, load_image
 from src.palette import build_palette_dataframe, export_palette_to_csv, load_palette_from_json
 
@@ -75,8 +81,48 @@ def main() -> None:
     print("\nReplacement palette preview:")
     print(palette_df.head(10).to_string(index=False))
 
+    # Difference matrix
+    print("\nBuilding difference matrix...")
+    difference_df = build_difference_matrix(
+        source_df=color_stats_df,
+        palette_df=palette_df,
+    )
+
+    difference_preview_csv = Path("output/tables/difference_matrix_preview.csv")
+    export_difference_preview(
+        difference_df=difference_df,
+        output_path=str(difference_preview_csv),
+        num_rows=200,
+    )
+
+    print("Wide difference matrix preview saved.")
+
+    # Long-form difference table
+    print("Building long-form difference table...")
+    long_difference_df = build_long_difference_table(
+        source_df=color_stats_df,
+        palette_df=palette_df,
+    )
+
+    long_difference_preview_csv = Path("output/tables/difference_long_preview.csv")
+    export_long_difference_preview(
+        long_df=long_difference_df,
+        output_path=str(long_difference_preview_csv),
+        num_rows=1000,
+    )
+
+    print("Long-form difference preview saved.")
+
+    print(f"\nWide difference shape: {difference_df.shape}")
+    print(f"Long difference shape: {long_difference_df.shape}")
+
+    print("\nDifference matrix preview:")
+    print(difference_df.head(5).to_string(index=False))
+
     print(f"\nSaved source stats to: {source_stats_csv}")
     print(f"Saved replacement palette to: {palette_csv}")
+    print(f"Saved difference preview to: {difference_preview_csv}")
+    print(f"Saved long difference preview to: {long_difference_preview_csv}")
 
 
 if __name__ == "__main__":
