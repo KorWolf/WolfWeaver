@@ -180,7 +180,12 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     )
 
     reconstruction_mode = form_values["reconstruction_mode"]
-    if reconstruction_mode not in {"scanline", "random_seeded"}:
+    if reconstruction_mode not in {
+        "scanline",
+        "random_seeded",
+        "random_unseeded",
+        "weighted_random",
+    }:
         raise ValueError("Invalid reconstruction mode.")
 
     frame_prefix = validate_safe_name(form_values["frame_prefix"], "Frame prefix")

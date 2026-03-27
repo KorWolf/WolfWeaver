@@ -50,7 +50,7 @@
                     accept=".png,.jpg,.jpeg,.webp"
                 >
                 <p class="help-text">
-                    Optional. If left empty, the default image from your config file is used.
+                    Optional. If left empty, the default image from config file is used.
                 </p>
             </fieldset>
 
@@ -123,6 +123,8 @@
                         >
                             <option value="scanline" {% if values.reconstruction_mode == "scanline" %}selected{% endif %}>Scanline</option>
                             <option value="random_seeded" {% if values.reconstruction_mode == "random_seeded" %}selected{% endif %}>Random seeded</option>
+                            <option value="random_unseeded" {% if values.reconstruction_mode == "random_unseeded" %}selected{% endif %}>Random unseeded</option>
+                            <option value="weighted_random" {% if values.reconstruction_mode == "weighted_random" %}selected{% endif %}>Weighted random</option>
                         </select>
                         <div id="mode-description" class="setting-description" aria-live="polite"></div>
                     </div>
@@ -141,7 +143,7 @@
                             required
                         >
                         <p class="help-text">
-                            Used only by seeded random reconstruction. The same seed gives the same result.
+                            Used by seeded random modes. The same seed gives the same result.
                         </p>
                     </div>
 
@@ -225,11 +227,13 @@
 
         const reconstructionDescriptions = {
             "scanline": "Scanline places replacement colors in the order the image is scanned from top-left to bottom-right. This gives a stable, structured result.",
-            "random_seeded": "Random seeded shuffles placement while staying repeatable. The same seed and settings should produce the same result."
+            "random_seeded": "Random seeded shuffles placement while staying repeatable. The same seed and settings should produce the same result.",
+            "random_unseeded": "Random unseeded shuffles placement differently every run. Good for exploring new variations quickly.",
+            "weighted_random": "Weighted random uses randomness but favors lower-score assignments more strongly within each source-color group while preserving exact counts."
         };
 
         function syncSeedState() {
-            const usesSeed = modeField.value === "random_seeded";
+            const usesSeed = modeField.value === "random_seeded" || modeField.value === "weighted_random";
             seedField.disabled = !usesSeed;
         }
 

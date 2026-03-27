@@ -29,7 +29,7 @@ def load_config(config_path: Path) -> dict:
     if missing_keys:
         raise ValueError(f"Config file is missing required keys: {missing_keys}")
 
-    valid_modes = ["scanline", "random_seeded"]
+    valid_modes = ["scanline", "random_seeded", "random_unseeded", "weighted_random"]
     if config["reconstruction_mode"] not in valid_modes:
         raise ValueError(
             f"Invalid reconstruction_mode: {config['reconstruction_mode']}. "
