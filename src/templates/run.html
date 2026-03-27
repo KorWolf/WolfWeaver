@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Run Progress - Tapestry Pipeline</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="page">
+        <h1>Run in progress</h1>
+
+        {% if advisory %}
+            <section class="message note">
+                <p>{{ advisory }}</p>
+            </section>
+        {% endif %}
+
+        <section class="results-card">
+            <h2>Status</h2>
+            <p id="run-timer">Run timer: 0m 0.0s</p>
+            <p id="run-status">Status: queued</p>
+            <p id="run-frames">Frames completed: 0 / 0</p>
+
+            <div class="progress-wrapper" aria-label="Run progress">
+                <div id="progress-bar" class="progress-bar" style="width: 0%;"></div>
+            </div>
+            <p id="progress-text">0%</p>
+        </section>
+
+        <section id="frames-section" class="results-card hidden">
+            <h2>Completed frames</h2>
+            <div id="frame-grid" class="frame-grid"></div>
+        </section>
+
+        <section id="summary-section" class="results-card hidden">
+            <h2>Summary</h2>
+            <dl class="summary-list">
+                <div>
+                    <dt>Run directory</dt>
+                    <dd id="summary-run-dir"></dd>
+                </div>
+                <div>
+                    <dt>Image size</dt>
+                    <dd id="summary-image-size"></dd>
+                </div>
+                <div>
+                    <dt>Total pixels</dt>
+                    <dd id="summary-total-pixels"></dd>
+                </div>
+                <div>
+                    <dt>Unique source colors</dt>
+                    <dd id="summary-unique-colors"></dd>
+                </div>
+                <div>
+                    <dt>Palette name</dt>
+                    <dd id="summary-palette-name"></dd>
+                </div>
+                <div>
+                    <dt>Palette size</dt>
+                    <dd id="summary-palette-size"></dd>
+                </div>
+                <div>
+                    <dt>Reconstruction mode</dt>
+                    <dd id="summary-mode"></dd>
+                </div>
+                <div>
+                    <dt>Frames generated</dt>
+                    <dd id="summary-frame-count"></dd>
+                </div>
+                <div>
+                    <dt>Total runtime</dt>
+                    <dd id="summary-runtime"></dd>
+                </div>
+            </dl>
+        </section>
+
+        <section id="gif-section" class="results-card hidden">
+            <h2>GIF</h2>
+            <img id="gif-image" class="gif-preview" alt="Generated GIF preview">
+            <p><a id="gif-download" href="" download>Download GIF</a></p>
+        </section>
+
+        <div class="actions">
+            <a class="button-link" href="{{ url_for('form_page') }}">Start another run</a>
+        </div>
+    </main>
+
+    <script>
+        const jobId = "{{ job_id }}";
+        const timerEl = document.getElementById("run-timer");
+        const statusEl = document.getElementById("run-status");
+        const framesEl = document.getElementById("run-frames");
+        const progressBarEl = document.getElementById("progress-bar");
+        const progressTextEl = document.getElementById("progress-text");
+
+        const framesSection = document.getElementById("frames-section");
+        const frameGrid = document.getElementById("frame-grid");
+
+        const summarySection = document.getElementById("summary-section");
+        const gifSection = document.getElementById("gif-section");
+
+        let runStartedAtMs = Date.now();
+        let timerIntervalId = null;
+        let finalRuntimeLocked = false;
+
+        function formatElapsed(secondsTotal) {
+            const minutes = Math.floor(secondsTotal / 60);
+            const seconds = secondsTotal % 60;
+            return `${minutes}m ${seconds.toFixed(1)}s`;
+        }
+
+        function startClientTimer() {
+            if (timerIntervalId !== null) {
+                clearInterval(timerIntervalId);
+            }
+
+            timerIntervalId = setInterval(() => {
+                if (finalRuntimeLocked) {
+                    return;
+                }
+
+                const elapsedSeconds = (Date.now() - runStartedAtMs) / 1000;
+                timerEl.textContent = `Run timer: ${formatElapsed(elapsedSeconds)}`;
+            }, 100);
+        }
+
+        function stopClientTimer(finalSeconds) {
+            finalRuntimeLocked = true;
+
+            if (timerIntervalId !== null) {
+                clearInterval(timerIntervalId);
+                timerIntervalId = null;
+            }
+
+            timerEl.textContent = `Run timer: ${formatElapsed(finalSeconds)}`;
+        }
+
+        function renderFrames(frameUrls) {
+            frameGrid.innerHTML = "";
+
+            for (let i = 0; i < frameUrls.length; i++) {
+                const frameUrl = frameUrls[i];
+
+                const figure = document.createElement("figure");
+                figure.className = "frame-card";
+
+                const img = document.createElement("img");
+                img.src = frameUrl;
+                img.alt = `Generated frame ${i + 1}`;
+
+                const caption = document.createElement("figcaption");
+                caption.textContent = `Frame ${i + 1}`;
+
+                const download = document.createElement("a");
+                download.href = frameUrl;
+                download.download = `frame_${String(i + 1).padStart(3, "0")}.png`;
+                download.textContent = "Download frame";
+
+                figure.appendChild(img);
+                figure.appendChild(caption);
+                figure.appendChild(download);
+                frameGrid.appendChild(figure);
+            }
+
+            if (frameUrls.length > 0) {
+                framesSection.classList.remove("hidden");
+            }
+        }
+
+        async function pollStatus() {
+            const response = await fetch(`/api/run/${jobId}`);
+            const data = await response.json();
+
+            if (data.status === "failed") {
+                statusEl.textContent = `Status: failed - ${data.error}`;
+                progressBarEl.style.width = "100%";
+                progressTextEl.textContent = "Failed";
+                stopClientTimer(0);
+                return;
+            }
+
+            statusEl.textContent = `Status: ${data.status}`;
+            framesEl.textContent = `Frames completed: ${data.completed_frames} / ${data.frame_count}`;
+            progressBarEl.style.width = `${data.percent_complete}%`;
+            progressTextEl.textContent = `${data.percent_complete}%`;
+
+            renderFrames(data.frame_urls || []);
+
+            if (data.status === "completed") {
+                stopClientTimer(Number(data.total_runtime_seconds || 0));
+                renderCompletedResults(data);
+                return;
+            }
+
+            setTimeout(pollStatus, 1000);
+        }
+
+        function renderCompletedResults(data) {
+            document.getElementById("summary-run-dir").textContent = data.run_dir;
+            document.getElementById("summary-image-size").textContent = `${data.image_width} × ${data.image_height}`;
+            document.getElementById("summary-total-pixels").textContent = data.total_pixels;
+            document.getElementById("summary-unique-colors").textContent = data.unique_source_colors;
+            document.getElementById("summary-palette-name").textContent = data.palette_name;
+            document.getElementById("summary-palette-size").textContent = data.palette_size;
+            document.getElementById("summary-mode").textContent = data.reconstruction_mode;
+            document.getElementById("summary-frame-count").textContent = data.frame_count;
+            document.getElementById("summary-runtime").textContent = data.runtime_text;
+
+            summarySection.classList.remove("hidden");
+
+            if (data.gif_url) {
+                const gifImage = document.getElementById("gif-image");
+                const gifDownload = document.getElementById("gif-download");
+
+                gifImage.src = data.gif_url;
+                gifDownload.href = data.gif_url;
+                gifSection.classList.remove("hidden");
+            }
+        }
+
+        startClientTimer();
+        pollStatus();
+    </script>
+</body>
+</html>

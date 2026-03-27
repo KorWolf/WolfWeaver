@@ -1,6 +1,6 @@
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 from src.animate import create_gif_from_frames
 from src.assign import (
@@ -35,6 +35,40 @@ from src.run_manager import (
 )
 
 
+def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
+    palette_colors = config.get("palette_colors")
+
+    if palette_colors is not None:
+        if not isinstance(palette_colors, list) or len(palette_colors) == 0:
+            raise ValueError("palette_colors must be a non-empty list of hex colors.")
+
+        return {
+            "name": config.get("palette_name", "ui_palette"),
+            "colors": palette_colors,
+        }
+
+    palette_path = Path(config["palette_file"])
+    if not palette_path.exists():
+        raise FileNotFoundError(f"Palette file not found: {palette_path}")
+
+    return load_palette_from_json(palette_path)
+
+
+def validate_runtime_config(config: dict[str, Any]) -> None:
+    frame_count = int(config["frame_count"])
+    gif_frame_duration_ms = int(config["gif_frame_duration_ms"])
+    random_seed = int(config["random_seed"])
+
+    if frame_count < 1:
+        raise ValueError("frame_count must be at least 1.")
+
+    if gif_frame_duration_ms < 1:
+        raise ValueError("gif_frame_duration_ms must be at least 1.")
+
+    if random_seed < 0:
+        raise ValueError("random_seed must be 0 or greater.")
+
+
 def run_single_rotation(
     rotation_index: int,
     image_array,
@@ -47,13 +81,13 @@ def run_single_rotation(
     run_subdirs: dict[str, Path],
     save_debug_tables: bool = False,
 ) -> Path:
-    """
-    Run one full pipeline pass for a rotated palette order and save one frame.
+    palette_size = len(base_palette_data["colors"])
+    effective_rotation_index = rotation_index % palette_size
 
-    Returns:
-        Path to the saved PNG frame
-    """
-    rotated_colors = rotate_palette_colors(base_palette_data["colors"], rotation_index)
+    rotated_colors = rotate_palette_colors(
+        base_palette_data["colors"],
+        effective_rotation_index,
+    )
 
     rotated_palette_data = {
         "name": f"{base_palette_data.get('name', 'palette')}_rot_{rotation_index:03d}",
@@ -112,16 +146,12 @@ def run_single_rotation(
     return frame_path
 
 
-def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
-    """
-    Run the full image transformation pipeline using the provided config.
-
-    Returns a summary dictionary with useful output paths and run metadata.
-    """
+def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
     start_time = time.perf_counter()
 
+    validate_runtime_config(config)
+
     image_path = Path(config["source_image"])
-    palette_path = Path(config["palette_file"])
     frame_count = int(config["frame_count"])
     save_debug_tables = bool(config["save_debug_tables"])
     create_gif = bool(config["create_gif"])
@@ -134,12 +164,12 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
 
-    if not palette_path.exists():
-        raise FileNotFoundError(f"Palette file not found: {palette_path}")
-
     run_dir = create_run_directory()
     run_subdirs = create_run_subdirectories(run_dir)
     config_snapshot_path = save_config_snapshot(config, run_dir)
+
+    base_palette_data = resolve_palette_data(config)
+    palette_size = len(base_palette_data["colors"])
 
     image_array = load_image(image_path)
     height, width = get_image_dimensions(image_array)
@@ -155,15 +185,28 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     source_stats_csv = run_subdirs["tables"] / "source_color_stats.csv"
     export_color_stats_to_csv(color_stats_df, str(source_stats_csv))
 
-    base_palette_data = load_palette_from_json(palette_path)
-
-    if frame_count > len(base_palette_data["colors"]):
-        raise ValueError(
-            f"frame_count ({frame_count}) cannot exceed palette size ({len(base_palette_data['colors'])})"
-        )
-
     frame_paths: list[Path] = []
     frame_timings: list[float] = []
+
+    yield {
+        "status": "started",
+        "run_dir": run_dir,
+        "config_snapshot_path": config_snapshot_path,
+        "source_stats_csv": source_stats_csv,
+        "frame_paths": [],
+        "gif_path": None,
+        "image_width": width,
+        "image_height": height,
+        "total_pixels": total_pixels,
+        "unique_source_colors": len(color_freq),
+        "frame_count": frame_count,
+        "frame_timings_seconds": [],
+        "total_runtime_seconds": 0.0,
+        "palette_name": base_palette_data.get("name", "unnamed_palette"),
+        "palette_size": palette_size,
+        "reconstruction_mode": reconstruction_mode,
+        "completed_frames": 0,
+    }
 
     for rotation_index in range(frame_count):
         frame_start = time.perf_counter()
@@ -187,10 +230,30 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
         frame_paths.append(frame_path)
         frame_timings.append(frame_duration)
 
+        yield {
+            "status": "running",
+            "run_dir": run_dir,
+            "config_snapshot_path": config_snapshot_path,
+            "source_stats_csv": source_stats_csv,
+            "frame_paths": list(frame_paths),
+            "gif_path": None,
+            "image_width": width,
+            "image_height": height,
+            "total_pixels": total_pixels,
+            "unique_source_colors": len(color_freq),
+            "frame_count": frame_count,
+            "frame_timings_seconds": list(frame_timings),
+            "total_runtime_seconds": time.perf_counter() - start_time,
+            "palette_name": base_palette_data.get("name", "unnamed_palette"),
+            "palette_size": palette_size,
+            "reconstruction_mode": reconstruction_mode,
+            "completed_frames": len(frame_paths),
+        }
+
     gif_path: Path | None = None
 
     if create_gif:
-        gif_path = run_subdirs["gifs"] / gif_output_name
+        gif_path = run_dir / "gifs" / gif_output_name
         create_gif_from_frames(
             frame_paths=frame_paths,
             output_path=gif_path,
@@ -200,21 +263,34 @@ def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
     end_time = time.perf_counter()
     total_duration = end_time - start_time
 
-    return {
+    yield {
+        "status": "completed",
         "run_dir": run_dir,
-        "run_subdirs": run_subdirs,
         "config_snapshot_path": config_snapshot_path,
         "source_stats_csv": source_stats_csv,
-        "frame_paths": frame_paths,
+        "frame_paths": list(frame_paths),
         "gif_path": gif_path,
         "image_width": width,
         "image_height": height,
         "total_pixels": total_pixels,
         "unique_source_colors": len(color_freq),
         "frame_count": frame_count,
-        "frame_timings_seconds": frame_timings,
+        "frame_timings_seconds": list(frame_timings),
         "total_runtime_seconds": total_duration,
         "palette_name": base_palette_data.get("name", "unnamed_palette"),
-        "palette_size": len(base_palette_data["colors"]),
+        "palette_size": palette_size,
         "reconstruction_mode": reconstruction_mode,
+        "completed_frames": len(frame_paths),
     }
+
+
+def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
+    final_result = None
+
+    for update in run_pipeline_stream(config):
+        final_result = update
+
+    if final_result is None:
+        raise RuntimeError("Pipeline did not produce any result.")
+
+    return final_result

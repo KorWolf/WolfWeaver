@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Tapestry Pipeline</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <main class="page">
+        <h1>Tapestry Pipeline</h1>
+        <p class="intro">
+            Upload an image, enter a palette, choose options, and generate the result.
+        </p>
+
+        {% if error %}
+            <section class="message error" aria-live="polite">
+                <h2>There was a problem</h2>
+                <p>{{ error }}</p>
+            </section>
+        {% endif %}
+
+        {% if advisory %}
+            <section class="message note" aria-live="polite">
+                <p>{{ advisory }}</p>
+            </section>
+        {% endif %}
+
+        <form action="{{ url_for('start_run') }}" method="post" enctype="multipart/form-data" class="form-card">
+            <fieldset>
+                <legend>Source image</legend>
+
+                <label for="source_image">Image file</label>
+                <input
+                    id="source_image"
+                    name="source_image"
+                    type="file"
+                    accept=".png,.jpg,.jpeg,.webp"
+                >
+                <p class="help-text">
+                    Optional. If left empty, the default image from your config file is used.
+                </p>
+            </fieldset>
+
+            <fieldset>
+                <legend>Palette</legend>
+
+                <label for="palette_text">Hex colors, one per line</label>
+                <textarea
+                    id="palette_text"
+                    name="palette_text"
+                    rows="12"
+                    required
+                >{{ values.palette_text }}</textarea>
+                <p class="help-text">
+                    Example: <code>#00A94F</code>
+                </p>
+            </fieldset>
+
+            <fieldset>
+                <legend>Run settings</legend>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label for="frame_count">Frame count</label>
+                        <input
+                            id="frame_count"
+                            name="frame_count"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value="{{ values.frame_count }}"
+                            required
+                        >
+                    </div>
+
+                    <div class="field">
+                        <label for="reconstruction_mode">Reconstruction mode</label>
+                        <select
+                            id="reconstruction_mode"
+                            name="reconstruction_mode"
+                            required
+                        >
+                            <option value="scanline" {% if values.reconstruction_mode == "scanline" %}selected{% endif %}>Scanline</option>
+                            <option value="random_seeded" {% if values.reconstruction_mode == "random_seeded" %}selected{% endif %}>Random seeded</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label for="random_seed">Random seed</label>
+                        <input
+                            id="random_seed"
+                            name="random_seed"
+                            type="number"
+                            min="0"
+                            step="1"
+                            value="{{ values.random_seed }}"
+                            required
+                        >
+                    </div>
+
+                    <div class="field checkbox-field">
+                        <input
+                            id="create_gif"
+                            name="create_gif"
+                            type="checkbox"
+                            {% if values.create_gif %}checked{% endif %}
+                        >
+                        <label for="create_gif">Create GIF</label>
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
+                        <label for="gif_frame_duration_ms">GIF frame duration (ms)</label>
+                        <input
+                            id="gif_frame_duration_ms"
+                            name="gif_frame_duration_ms"
+                            type="number"
+                            min="1"
+                            step="1"
+                            value="{{ values.gif_frame_duration_ms }}"
+                            required
+                        >
+                    </div>
+
+                    <div class="field">
+                        <label for="frame_prefix">Frame filename prefix</label>
+                        <input
+                            id="frame_prefix"
+                            name="frame_prefix"
+                            type="text"
+                            value="{{ values.frame_prefix }}"
+                            required
+                        >
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label for="gif_output_name">GIF filename</label>
+                    <input
+                        id="gif_output_name"
+                        name="gif_output_name"
+                        type="text"
+                        value="{{ values.gif_output_name }}"
+                        required
+                    >
+                </div>
+            </fieldset>
+
+            <div class="actions">
+                <button type="submit">Start run</button>
+            </div>
+        </form>
+    </main>
+
+    <script>
+        const modeField = document.getElementById("reconstruction_mode");
+        const seedField = document.getElementById("random_seed");
+        const frameCountField = document.getElementById("frame_count");
+        const paletteField = document.getElementById("palette_text");
+        const advisoryBox = document.querySelector(".message.note");
+
+        function syncSeedState() {
+            const usesSeed = modeField.value === "random_seeded";
+            seedField.disabled = !usesSeed;
+        }
+
+        function getPaletteSize() {
+            return paletteField.value
+                .split("\n")
+                .map(line => line.trim())
+                .filter(line => line.length > 0).length;
+        }
+
+        function updateAdvisory() {
+            const frameCount = parseInt(frameCountField.value || "0", 10);
+            const paletteSize = getPaletteSize();
+
+            let message = "";
+
+            if (frameCount > 0 && paletteSize > 0) {
+                if (frameCount > paletteSize) {
+                    message = `Some frames may repeat because frame count (${frameCount}) exceeds palette size (${paletteSize}).`;
+                } else if (frameCount < paletteSize) {
+                    message = `Not all possible frame iterations will be generated because frame count (${frameCount}) is smaller than palette size (${paletteSize}).`;
+                }
+            }
+
+            if (!advisoryBox) {
+                return;
+            }
+
+            if (message) {
+                advisoryBox.innerHTML = `<p>${message}</p>`;
+                advisoryBox.style.display = "block";
+            } else {
+                advisoryBox.style.display = "none";
+            }
+        }
+
+        modeField.addEventListener("change", syncSeedState);
+        frameCountField.addEventListener("input", updateAdvisory);
+        paletteField.addEventListener("input", updateAdvisory);
+
+        syncSeedState();
+        updateAdvisory();
+    </script>
+</body>
+</html>
