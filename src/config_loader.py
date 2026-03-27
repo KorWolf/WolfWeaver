@@ -21,10 +21,19 @@ def load_config(config_path: Path) -> dict:
         "gif_frame_duration_ms",
         "gif_output_name",
         "frame_prefix",
+        "reconstruction_mode",
+        "random_seed"
     ]
 
     missing_keys = [key for key in required_keys if key not in config]
     if missing_keys:
         raise ValueError(f"Config file is missing required keys: {missing_keys}")
+
+    valid_modes = ["scanline", "random_seeded"]
+    if config["reconstruction_mode"] not in valid_modes:
+        raise ValueError(
+            f"Invalid reconstruction_mode: {config['reconstruction_mode']}. "
+            f"Valid options: {valid_modes}"
+        )
 
     return config

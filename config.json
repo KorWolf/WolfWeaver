@@ -6,5 +6,7 @@
     "create_gif": true,
     "gif_frame_duration_ms": 150,
     "gif_output_name": "rotating_palette.gif",
-    "frame_prefix": "frame"
+    "frame_prefix": "frame",
+    "reconstruction_mode": "random_seeded",
+    "random_seed": 42
 }

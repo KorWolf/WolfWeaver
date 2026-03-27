@@ -38,6 +38,8 @@ def run_single_rotation(
     base_palette_data: dict,
     total_pixels: int,
     frame_prefix: str,
+    reconstruction_mode: str,
+    random_seed: int,
     save_debug_tables: bool = False,
 ) -> Path:
     """
@@ -82,6 +84,8 @@ def run_single_rotation(
     output_image_array = reconstruct_image_from_assignments(
         image_array=image_array,
         assignment_df=assignment_df,
+        reconstruction_mode=reconstruction_mode,
+        random_seed=random_seed + rotation_index,
     )
 
     frame_path = Path(f"output/frames/{frame_prefix}_{rotation_index:03d}.png")
@@ -119,6 +123,8 @@ def main() -> None:
     gif_duration_ms = int(config["gif_frame_duration_ms"])
     gif_output_name = str(config["gif_output_name"])
     frame_prefix = str(config["frame_prefix"])
+    reconstruction_mode = str(config["reconstruction_mode"])
+    random_seed = int(config["random_seed"])
 
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
@@ -166,6 +172,7 @@ def main() -> None:
 
     print(f"Base palette name: {base_palette_data.get('name', 'unnamed_palette')}")
     print(f"Palette size: {len(base_palette_data['colors'])}")
+    print(f"Reconstruction mode: {reconstruction_mode}")
     print(f"Generating {frame_count} rotated frame(s)...")
 
     frame_paths: List[Path] = []
@@ -180,6 +187,8 @@ def main() -> None:
             base_palette_data=base_palette_data,
             total_pixels=total_pixels,
             frame_prefix=frame_prefix,
+            reconstruction_mode=reconstruction_mode,
+            random_seed=random_seed,
             save_debug_tables=save_debug_tables,
         )
 
