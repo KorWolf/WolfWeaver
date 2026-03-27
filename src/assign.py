@@ -24,7 +24,6 @@ def build_assignment_table(
     - ReplacementHex
     - Score
     """
-    # Track how much of each source color remains unassigned.
     remaining_frequency: Dict[str, int] = {
         row["Hex"]: int(row["Frequency"])
         for _, row in source_df.iterrows()
@@ -37,14 +36,10 @@ def build_assignment_table(
         replacement_hex = str(palette_row["Hex"])
         quota_remaining = int(palette_row["Quota"])
 
-        # Filter to the score rows for this replacement color.
         candidate_rows = long_difference_df[
             long_difference_df["ReplacementOrder"] == replacement_order
         ].copy()
 
-        # Sort by:
-        # 1. lowest score first
-        # 2. source hex ascending for deterministic tie-breaking
         candidate_rows = candidate_rows.sort_values(
             by=["Score", "SourceHex"],
             ascending=[True, True],
@@ -84,7 +79,6 @@ def build_assignment_table(
                 f"Unfilled amount: {quota_remaining}"
             )
 
-    # Final sanity check: all source frequency should be consumed.
     leftover_total = sum(remaining_frequency.values())
     if leftover_total != 0:
         raise ValueError(

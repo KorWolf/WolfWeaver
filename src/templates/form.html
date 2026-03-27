@@ -21,7 +21,7 @@
         {% endif %}
 
         {% if advisory %}
-            <section class="message note" aria-live="polite">
+            <section class="message note" id="frame-advisory-box" aria-live="polite">
                 <p id="frame-advisory-text">{{ advisory }}</p>
             </section>
         {% else %}
@@ -73,6 +73,11 @@
                 <p class="help-text">
                     You can choose a preset above, then edit the hex values manually if you want.
                 </p>
+
+                <div class="palette-preview-block">
+                    <h2 class="palette-preview-heading">Palette preview</h2>
+                    <div id="palette-swatch-grid" class="palette-swatch-grid" aria-live="polite"></div>
+                </div>
             </fieldset>
 
             <fieldset>
@@ -180,22 +185,27 @@
         const frameCountField = document.getElementById("frame_count");
         const paletteField = document.getElementById("palette_text");
         const presetField = document.getElementById("selected_preset");
+        const swatchGrid = document.getElementById("palette-swatch-grid");
 
-        const advisoryBox = document.getElementById("frame-advisory-box") || document.querySelector(".message.note");
+        const advisoryBox = document.getElementById("frame-advisory-box");
         const advisoryText = document.getElementById("frame-advisory-text");
 
-        const palettePresets = {{ palette_presets | tojson }};
+        const palettePresets = {{ palette_presets|tojson|safe }};
 
         function syncSeedState() {
             const usesSeed = modeField.value === "random_seeded";
             seedField.disabled = !usesSeed;
         }
 
-        function getPaletteSize() {
+        function getPaletteLines() {
             return paletteField.value
                 .split("\n")
                 .map(line => line.trim())
-                .filter(line => line.length > 0).length;
+                .filter(line => line.length > 0);
+        }
+
+        function getPaletteSize() {
+            return getPaletteLines().length;
         }
 
         function updateAdvisory() {
@@ -234,15 +244,47 @@
 
             paletteField.value = palettePresets[selectedPreset].join("\n");
             updateAdvisory();
+            renderSwatches();
+        }
+
+        function renderSwatches() {
+            const colors = getPaletteLines();
+            swatchGrid.innerHTML = "";
+
+            if (colors.length === 0) {
+                return;
+            }
+
+            for (const color of colors) {
+                const swatchCard = document.createElement("div");
+                swatchCard.className = "palette-swatch-card";
+
+                const swatch = document.createElement("div");
+                swatch.className = "palette-swatch";
+                swatch.style.backgroundColor = color;
+                swatch.setAttribute("aria-label", `Color ${color}`);
+
+                const label = document.createElement("div");
+                label.className = "palette-swatch-label";
+                label.textContent = color.toUpperCase();
+
+                swatchCard.appendChild(swatch);
+                swatchCard.appendChild(label);
+                swatchGrid.appendChild(swatchCard);
+            }
         }
 
         modeField.addEventListener("change", syncSeedState);
         frameCountField.addEventListener("input", updateAdvisory);
-        paletteField.addEventListener("input", updateAdvisory);
+        paletteField.addEventListener("input", () => {
+            updateAdvisory();
+            renderSwatches();
+        });
         presetField.addEventListener("change", applyPresetToTextarea);
 
         syncSeedState();
         updateAdvisory();
+        renderSwatches();
     </script>
 </body>
 </html>
