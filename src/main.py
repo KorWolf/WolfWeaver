@@ -1,5 +1,11 @@
 from pathlib import Path
 
+from src.assign import (
+    build_assignment_summary,
+    build_assignment_table,
+    export_assignment_summary,
+    export_assignment_table,
+)
 from src.color_stats import (
     build_color_stats_dataframe,
     export_color_stats_to_csv,
@@ -78,9 +84,6 @@ def main() -> None:
 
     print("Palette quota sanity check passed.")
 
-    print("\nReplacement palette preview:")
-    print(palette_df.head(10).to_string(index=False))
-
     # Difference matrix
     print("\nBuilding difference matrix...")
     difference_df = build_difference_matrix(
@@ -97,7 +100,6 @@ def main() -> None:
 
     print("Wide difference matrix preview saved.")
 
-    # Long-form difference table
     print("Building long-form difference table...")
     long_difference_df = build_long_difference_table(
         source_df=color_stats_df,
@@ -113,16 +115,37 @@ def main() -> None:
 
     print("Long-form difference preview saved.")
 
-    print(f"\nWide difference shape: {difference_df.shape}")
+    print(f"Wide difference shape: {difference_df.shape}")
     print(f"Long difference shape: {long_difference_df.shape}")
 
-    print("\nDifference matrix preview:")
-    print(difference_df.head(5).to_string(index=False))
+    # Assignment step
+    print("\nBuilding assignment table...")
+    assignment_df = build_assignment_table(
+        source_df=color_stats_df,
+        palette_df=palette_df,
+        long_difference_df=long_difference_df,
+    )
+
+    assignment_csv = Path("output/tables/assignment_table.csv")
+    export_assignment_table(assignment_df, str(assignment_csv))
+
+    assignment_summary_df = build_assignment_summary(assignment_df)
+    assignment_summary_csv = Path("output/tables/assignment_summary.csv")
+    export_assignment_summary(assignment_summary_df, str(assignment_summary_csv))
+
+    print("Assignment table saved.")
+    print("Assignment summary saved.")
+
+    print(f"\nAssignment rows: {len(assignment_df)}")
+    print("\nAssignment summary preview:")
+    print(assignment_summary_df.to_string(index=False))
 
     print(f"\nSaved source stats to: {source_stats_csv}")
     print(f"Saved replacement palette to: {palette_csv}")
     print(f"Saved difference preview to: {difference_preview_csv}")
     print(f"Saved long difference preview to: {long_difference_preview_csv}")
+    print(f"Saved assignment table to: {assignment_csv}")
+    print(f"Saved assignment summary to: {assignment_summary_csv}")
 
 
 if __name__ == "__main__":
