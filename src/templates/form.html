@@ -22,7 +22,11 @@
 
         {% if advisory %}
             <section class="message note" aria-live="polite">
-                <p>{{ advisory }}</p>
+                <p id="frame-advisory-text">{{ advisory }}</p>
+            </section>
+        {% else %}
+            <section class="message note" id="frame-advisory-box" aria-live="polite" style="display: none;">
+                <p id="frame-advisory-text"></p>
             </section>
         {% endif %}
 
@@ -45,15 +49,29 @@
             <fieldset>
                 <legend>Palette</legend>
 
+                <label for="selected_preset">Preset palette</label>
+                <select id="selected_preset" name="selected_preset">
+                    <option value="">Custom / Manual palette</option>
+                    {% for preset_name, preset_colors in palette_presets.items() %}
+                        <option
+                            value="{{ preset_name }}"
+                            {% if values.selected_preset == preset_name %}selected{% endif %}
+                        >
+                            {{ preset_name.replace("_", " ").title() }}
+                        </option>
+                    {% endfor %}
+                </select>
+
                 <label for="palette_text">Hex colors, one per line</label>
                 <textarea
                     id="palette_text"
                     name="palette_text"
-                    rows="12"
+                    rows="14"
                     required
                 >{{ values.palette_text }}</textarea>
+
                 <p class="help-text">
-                    Example: <code>#00A94F</code>
+                    You can choose a preset above, then edit the hex values manually if you want.
                 </p>
             </fieldset>
 
@@ -161,7 +179,12 @@
         const seedField = document.getElementById("random_seed");
         const frameCountField = document.getElementById("frame_count");
         const paletteField = document.getElementById("palette_text");
-        const advisoryBox = document.querySelector(".message.note");
+        const presetField = document.getElementById("selected_preset");
+
+        const advisoryBox = document.getElementById("frame-advisory-box") || document.querySelector(".message.note");
+        const advisoryText = document.getElementById("frame-advisory-text");
+
+        const palettePresets = {{ palette_presets | tojson }};
 
         function syncSeedState() {
             const usesSeed = modeField.value === "random_seeded";
@@ -189,21 +212,34 @@
                 }
             }
 
-            if (!advisoryBox) {
+            if (!advisoryBox || !advisoryText) {
                 return;
             }
 
             if (message) {
-                advisoryBox.innerHTML = `<p>${message}</p>`;
+                advisoryText.textContent = message;
                 advisoryBox.style.display = "block";
             } else {
+                advisoryText.textContent = "";
                 advisoryBox.style.display = "none";
             }
+        }
+
+        function applyPresetToTextarea() {
+            const selectedPreset = presetField.value;
+
+            if (!selectedPreset || !(selectedPreset in palettePresets)) {
+                return;
+            }
+
+            paletteField.value = palettePresets[selectedPreset].join("\n");
+            updateAdvisory();
         }
 
         modeField.addEventListener("change", syncSeedState);
         frameCountField.addEventListener("input", updateAdvisory);
         paletteField.addEventListener("input", updateAdvisory);
+        presetField.addEventListener("change", applyPresetToTextarea);
 
         syncSeedState();
         updateAdvisory();

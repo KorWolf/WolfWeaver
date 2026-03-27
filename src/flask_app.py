@@ -9,6 +9,7 @@ from werkzeug.utils import secure_filename
 
 from src.config_loader import load_config
 from src.palette import load_palette_from_json
+from src.palette_presets import PALETTE_PRESETS
 from src.pipeline import run_pipeline_stream
 
 
@@ -45,6 +46,7 @@ def build_default_form_values() -> dict:
         "palette_text": load_default_palette_text(),
         "frame_prefix": str(defaults["frame_prefix"]),
         "gif_output_name": str(defaults["gif_output_name"]),
+        "selected_preset": "",
     }
 
 
@@ -119,12 +121,6 @@ def validate_image_upload(file_storage) -> Path | None:
 
     return saved_path
 
-def run_file_url(path: Path) -> str:
-    """
-    Convert an output file path under RUNS_ROOT into a browser-safe URL.
-    """
-    relative_path = path.resolve().relative_to(RUNS_ROOT)
-    return url_for("serve_run_file", subpath=relative_path.as_posix())
 
 def build_frame_count_message(frame_count: int, palette_size: int) -> str | None:
     if frame_count == palette_size:
@@ -169,6 +165,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
             "gif_output_name",
             str(defaults["gif_output_name"]),
         ),
+        "selected_preset": request.form.get("selected_preset", ""),
     }
 
     palette_colors = parse_palette_text(form_values["palette_text"])
@@ -202,7 +199,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         "source_image": str(source_image),
         "palette_file": str(defaults["palette_file"]),
         "palette_colors": palette_colors,
-        "palette_name": "web_palette",
+        "palette_name": form_values["selected_preset"] or "web_palette",
         "frame_count": frame_count,
         "save_debug_tables": False,
         "create_gif": bool(form_values["create_gif"]),
@@ -217,37 +214,9 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     return config, form_values, advisory
 
 
-def serialize_update(update: dict) -> dict:
-    frame_urls = [
-        url_for("serve_run_file", subpath=str(path.resolve().relative_to(RUNS_ROOT)))
-        for path in update.get("frame_paths", [])
-    ]
-
-    gif_url = None
-    gif_path = update.get("gif_path")
-    if gif_path is not None:
-        gif_url = url_for(
-            "serve_run_file",
-            subpath=str(gif_path.resolve().relative_to(RUNS_ROOT)),
-        )
-
-    total_runtime_seconds = float(update.get("total_runtime_seconds", 0.0))
-    frame_count = int(update.get("frame_count", 0))
-    completed_frames = int(update.get("completed_frames", 0))
-
-    percent_complete = 0
-    if frame_count > 0:
-        percent_complete = int((completed_frames / frame_count) * 100)
-
-    if update.get("status") == "completed":
-        percent_complete = 100
-
-    def run_file_url(path: Path) -> str:
-        """
-        Convert an output file path under RUNS_ROOT into a browser-safe URL.
-        """
-        relative_path = path.resolve().relative_to(RUNS_ROOT)
-        return url_for("serve_run_file", subpath=relative_path.as_posix())
+def run_file_url(path: Path) -> str:
+    relative_path = path.resolve().relative_to(RUNS_ROOT)
+    return url_for("serve_run_file", subpath=relative_path.as_posix())
 
 
 def serialize_update(update: dict) -> dict:
@@ -323,6 +292,7 @@ def form_page():
         error=None,
         advisory=advisory,
         values=form_values,
+        palette_presets=PALETTE_PRESETS,
     )
 
 
@@ -363,6 +333,7 @@ def start_run():
             "palette_text": request.form.get("palette_text", defaults["palette_text"]),
             "frame_prefix": request.form.get("frame_prefix", defaults["frame_prefix"]),
             "gif_output_name": request.form.get("gif_output_name", defaults["gif_output_name"]),
+            "selected_preset": request.form.get("selected_preset", ""),
         }
 
         try:
@@ -378,6 +349,7 @@ def start_run():
             error=str(error),
             advisory=advisory,
             values=attempted_values,
+            palette_presets=PALETTE_PRESETS,
         ), 400
 
 
