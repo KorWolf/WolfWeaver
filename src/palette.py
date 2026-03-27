@@ -23,7 +23,7 @@ def hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
 
 def calculate_saturation(rgb: tuple[int, int, int]) -> int:
     """
-    Saturation used in Excel method:
+    Saturation used in your Excel method:
     max(R, G, B) - min(R, G, B)
     """
     return max(rgb) - min(rgb)
@@ -31,7 +31,7 @@ def calculate_saturation(rgb: tuple[int, int, int]) -> int:
 
 def calculate_lightness(rgb: tuple[int, int, int]) -> float:
     """
-    Lightness used in Excel method:
+    Lightness used in your Excel method:
     average of R, G, B
     """
     return sum(rgb) / 3.0
@@ -65,13 +65,6 @@ def load_palette_from_json(palette_path: Path) -> dict:
 def calculate_even_quotas(total_pixels: int, palette_size: int) -> List[int]:
     """
     Divide total pixels as evenly as possible across the palette colors.
-
-    Example:
-    174960 pixels across 10 colors ->
-    base quota = 17496
-    remainder = 0
-
-    If there is a remainder, the first N colors get +1.
     """
     if palette_size <= 0:
         raise ValueError("palette_size must be greater than 0")

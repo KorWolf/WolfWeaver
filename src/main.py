@@ -19,6 +19,7 @@ from src.difference import (
 )
 from src.image_io import get_image_dimensions, load_image
 from src.palette import build_palette_dataframe, export_palette_to_csv, load_palette_from_json
+from src.reconstruct import reconstruct_image_from_assignments, save_image_array
 
 
 def main() -> None:
@@ -114,7 +115,6 @@ def main() -> None:
     )
 
     print("Long-form difference preview saved.")
-
     print(f"Wide difference shape: {difference_df.shape}")
     print(f"Long difference shape: {long_difference_df.shape}")
 
@@ -135,8 +135,20 @@ def main() -> None:
 
     print("Assignment table saved.")
     print("Assignment summary saved.")
+    print(f"Assignment rows: {len(assignment_df)}")
 
-    print(f"\nAssignment rows: {len(assignment_df)}")
+    # Reconstruction step
+    print("\nReconstructing final image...")
+    output_image_array = reconstruct_image_from_assignments(
+        image_array=image_array,
+        assignment_df=assignment_df,
+    )
+
+    output_image_path = Path("output/frames/reconstructed_example.png")
+    save_image_array(output_image_array, output_image_path)
+
+    print("Final image saved.")
+
     print("\nAssignment summary preview:")
     print(assignment_summary_df.to_string(index=False))
 
@@ -146,6 +158,7 @@ def main() -> None:
     print(f"Saved long difference preview to: {long_difference_preview_csv}")
     print(f"Saved assignment table to: {assignment_csv}")
     print(f"Saved assignment summary to: {assignment_summary_csv}")
+    print(f"Saved reconstructed image to: {output_image_path}")
 
 
 if __name__ == "__main__":
