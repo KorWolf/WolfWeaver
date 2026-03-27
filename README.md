@@ -19,3 +19,6 @@ A Python-based image transformation pipeline for remapping images into a constra
 - Pandas
 - ImageIO
 
+## Inspiration
+
+This project was inspired by the tumbler post by nosferatuprivilege located here: https://www.tumblr.com/teawitch/812178955121623040?source=share
