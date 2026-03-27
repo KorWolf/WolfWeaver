@@ -62,6 +62,20 @@ def load_palette_from_json(palette_path: Path) -> dict:
     return data
 
 
+def rotate_palette_colors(colors: List[str], start_index: int) -> List[str]:
+    """
+    Rotate the palette order so that colors[start_index] becomes the first color.
+
+    Example:
+    [A, B, C, D], start_index=1 -> [B, C, D, A]
+    """
+    if len(colors) == 0:
+        raise ValueError("Palette must contain at least one color.")
+
+    normalized_index = start_index % len(colors)
+    return colors[normalized_index:] + colors[:normalized_index]
+
+
 def calculate_even_quotas(total_pixels: int, palette_size: int) -> List[int]:
     """
     Divide total pixels as evenly as possible across the palette colors.
