@@ -225,3 +225,11 @@ button,
     font-size: 0.9rem;
     word-break: break-word;
 }
+
+.setting-description {
+    margin-top: 0.5rem;
+    padding: 0.75rem;
+    border: 1px solid var(--border-color);
+    background: var(--bg-soft);
+    font-size: 0.95rem;
+}
