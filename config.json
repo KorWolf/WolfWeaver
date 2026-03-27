@@ -1,8 +1,10 @@
 {
-    "source_image": "input/source_images/example.png",
+    "source_image": "input/source_images/birthOfVenus.png",
     "palette_file": "input/palettes/example_palette.json",
-    "output_prefix": "venus_test",
-    "gif_frame_duration_ms": 120,
-    "random_seed": 42
+    "frame_count": 10,
+    "save_debug_tables": false,
+    "create_gif": true,
+    "gif_frame_duration_ms": 150,
+    "gif_output_name": "rotating_palette.gif",
+    "frame_prefix": "frame"
 }
-

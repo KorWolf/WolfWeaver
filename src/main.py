@@ -14,6 +14,7 @@ from src.color_stats import (
     export_color_stats_to_csv,
     extract_color_frequencies,
 )
+from src.config_loader import load_config
 from src.difference import (
     build_difference_matrix,
     build_long_difference_table,
@@ -36,6 +37,7 @@ def run_single_rotation(
     color_stats_df,
     base_palette_data: dict,
     total_pixels: int,
+    frame_prefix: str,
     save_debug_tables: bool = False,
 ) -> Path:
     """
@@ -82,10 +84,9 @@ def run_single_rotation(
         assignment_df=assignment_df,
     )
 
-    frame_path = Path(f"output/frames/frame_{rotation_index:03d}.png")
+    frame_path = Path(f"output/frames/{frame_prefix}_{rotation_index:03d}.png")
     save_image_array(output_image_array, frame_path)
 
-    # Optional per-frame debug outputs
     if save_debug_tables:
         palette_csv = Path(f"output/debug/palette_rot_{rotation_index:03d}.csv")
         difference_preview_csv = Path(f"output/debug/difference_rot_{rotation_index:03d}.csv")
@@ -106,26 +107,18 @@ def run_single_rotation(
 
 def main() -> None:
     start_time = time.perf_counter()
-
     print("Tapestry pipeline starting...")
 
-    image_path = Path("input/source_images/birthOfVenus.png")
-    palette_path = Path("input/palettes/example_palette.json")
+    config = load_config(Path("config.json"))
 
-    # Convention:
-    # frame_count controls how many rotations to generate.
-    # Set it equal to the palette size to generate the full cycle.
-    frame_count = 10
-
-    # Convention:
-    # save_debug_tables=False keeps output lighter.
-    # Set to True if you want CSV/debug files for every rotation.
-    save_debug_tables = False
-
-    # Convention:
-    # GIF creation is optional but enabled by default here.
-    create_gif = True
-    gif_duration_ms = 150
+    image_path = Path(config["source_image"])
+    palette_path = Path(config["palette_file"])
+    frame_count = int(config["frame_count"])
+    save_debug_tables = bool(config["save_debug_tables"])
+    create_gif = bool(config["create_gif"])
+    gif_duration_ms = int(config["gif_frame_duration_ms"])
+    gif_output_name = str(config["gif_output_name"])
+    frame_prefix = str(config["frame_prefix"])
 
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
@@ -186,6 +179,7 @@ def main() -> None:
             color_stats_df=color_stats_df,
             base_palette_data=base_palette_data,
             total_pixels=total_pixels,
+            frame_prefix=frame_prefix,
             save_debug_tables=save_debug_tables,
         )
 
@@ -193,11 +187,10 @@ def main() -> None:
         frame_duration = frame_end - frame_start
 
         print(f"Rotation {rotation_index:03d} completed in {frame_duration:.2f}s")
-
         frame_paths.append(frame_path)
 
     if create_gif:
-        gif_path = Path("output/gifs/rotating_palette.gif")
+        gif_path = Path(f"output/gifs/{gif_output_name}")
         create_gif_from_frames(
             frame_paths=frame_paths,
             output_path=gif_path,
@@ -210,7 +203,6 @@ def main() -> None:
 
     end_time = time.perf_counter()
     total_duration = end_time - start_time
-
     minutes = int(total_duration // 60)
     seconds = total_duration % 60
 
