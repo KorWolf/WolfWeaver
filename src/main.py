@@ -29,6 +29,11 @@ from src.palette import (
     rotate_palette_colors,
 )
 from src.reconstruct import reconstruct_image_from_assignments, save_image_array
+from src.run_manager import (
+    create_run_directory,
+    create_run_subdirectories,
+    save_config_snapshot,
+)
 
 
 def run_single_rotation(
@@ -40,6 +45,7 @@ def run_single_rotation(
     frame_prefix: str,
     reconstruction_mode: str,
     random_seed: int,
+    run_subdirs: dict[str, Path],
     save_debug_tables: bool = False,
 ) -> Path:
     """
@@ -88,15 +94,15 @@ def run_single_rotation(
         random_seed=random_seed + rotation_index,
     )
 
-    frame_path = Path(f"output/frames/{frame_prefix}_{rotation_index:03d}.png")
+    frame_path = run_subdirs["frames"] / f"{frame_prefix}_{rotation_index:03d}.png"
     save_image_array(output_image_array, frame_path)
 
     if save_debug_tables:
-        palette_csv = Path(f"output/debug/palette_rot_{rotation_index:03d}.csv")
-        difference_preview_csv = Path(f"output/debug/difference_rot_{rotation_index:03d}.csv")
-        long_difference_preview_csv = Path(f"output/debug/difference_long_rot_{rotation_index:03d}.csv")
-        assignment_csv = Path(f"output/debug/assignment_rot_{rotation_index:03d}.csv")
-        assignment_summary_csv = Path(f"output/debug/assignment_summary_rot_{rotation_index:03d}.csv")
+        palette_csv = run_subdirs["debug"] / f"palette_rot_{rotation_index:03d}.csv"
+        difference_preview_csv = run_subdirs["debug"] / f"difference_rot_{rotation_index:03d}.csv"
+        long_difference_preview_csv = run_subdirs["debug"] / f"difference_long_rot_{rotation_index:03d}.csv"
+        assignment_csv = run_subdirs["debug"] / f"assignment_rot_{rotation_index:03d}.csv"
+        assignment_summary_csv = run_subdirs["debug"] / f"assignment_summary_rot_{rotation_index:03d}.csv"
 
         export_palette_to_csv(palette_df, palette_csv)
         export_difference_preview(difference_df, str(difference_preview_csv), num_rows=200)
@@ -132,14 +138,11 @@ def main() -> None:
     if not palette_path.exists():
         raise FileNotFoundError(f"Palette file not found: {palette_path}")
 
-    required_dirs = [
-        Path("output/frames"),
-        Path("output/gifs"),
-        Path("output/tables"),
-        Path("output/debug"),
-    ]
-    for directory in required_dirs:
-        directory.mkdir(parents=True, exist_ok=True)
+    run_dir = create_run_directory()
+    run_subdirs = create_run_subdirectories(run_dir)
+    config_snapshot_path = save_config_snapshot(config, run_dir)
+
+    print(f"Run directory: {run_dir}")
 
     image_array = load_image(image_path)
     height, width = get_image_dimensions(image_array)
@@ -160,7 +163,7 @@ def main() -> None:
     print("Source color sanity check passed.")
 
     color_stats_df = build_color_stats_dataframe(color_freq)
-    source_stats_csv = Path("output/tables/source_color_stats.csv")
+    source_stats_csv = run_subdirs["tables"] / "source_color_stats.csv"
     export_color_stats_to_csv(color_stats_df, str(source_stats_csv))
 
     base_palette_data = load_palette_from_json(palette_path)
@@ -189,6 +192,7 @@ def main() -> None:
             frame_prefix=frame_prefix,
             reconstruction_mode=reconstruction_mode,
             random_seed=random_seed,
+            run_subdirs=run_subdirs,
             save_debug_tables=save_debug_tables,
         )
 
@@ -199,7 +203,7 @@ def main() -> None:
         frame_paths.append(frame_path)
 
     if create_gif:
-        gif_path = Path(f"output/gifs/{gif_output_name}")
+        gif_path = run_subdirs["gifs"] / gif_output_name
         create_gif_from_frames(
             frame_paths=frame_paths,
             output_path=gif_path,
@@ -208,6 +212,7 @@ def main() -> None:
         print(f"GIF saved to {gif_path}")
 
     print(f"\nSaved source stats to: {source_stats_csv}")
+    print(f"Saved config snapshot to: {config_snapshot_path}")
     print(f"Generated {len(frame_paths)} frame(s).")
 
     end_time = time.perf_counter()
