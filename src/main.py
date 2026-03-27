@@ -1,24 +1,26 @@
 from pathlib import Path
 
-from src.image_io import load_image, get_image_dimensions
 from src.color_stats import (
     build_color_stats_dataframe,
     export_color_stats_to_csv,
     extract_color_frequencies,
 )
+from src.image_io import get_image_dimensions, load_image
+from src.palette import build_palette_dataframe, export_palette_to_csv, load_palette_from_json
 
 
 def main() -> None:
     print("Tapestry pipeline starting...")
 
-    # Convention:
-    # Change this filename if you use a different test image.
     image_path = Path("input/source_images/birthOfVenus.png")
+    palette_path = Path("input/palettes/example_palette.json")
 
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
 
-    # Ensure output folders exist
+    if not palette_path.exists():
+        raise FileNotFoundError(f"Palette file not found: {palette_path}")
+
     required_dirs = [
         Path("output/frames"),
         Path("output/gifs"),
@@ -31,40 +33,51 @@ def main() -> None:
     # Load image
     image_array = load_image(image_path)
 
-    # Get dimensions
+    # Dimensions
     height, width = get_image_dimensions(image_array)
-    print(f"Image size: {width} x {height}")
-
-    # Count colors
-    color_freq = extract_color_frequencies(image_array)
-    print(f"Unique colors: {len(color_freq)}")
-
-    # Sanity check
     total_pixels = width * height
-    sum_counts = sum(color_freq.values())
 
+    print(f"Image size: {width} x {height}")
     print(f"Total pixels: {total_pixels}")
-    print(f"Sum of frequencies: {sum_counts}")
+
+    # Source color stats
+    color_freq = extract_color_frequencies(image_array)
+    print(f"Unique source colors: {len(color_freq)}")
+
+    sum_counts = sum(color_freq.values())
+    print(f"Sum of source frequencies: {sum_counts}")
 
     if total_pixels != sum_counts:
         raise ValueError("Sanity check failed: total pixel count does not match summed frequencies.")
 
-    print("Sanity check passed.")
+    print("Source color sanity check passed.")
 
-    # Build table
     color_stats_df = build_color_stats_dataframe(color_freq)
+    source_stats_csv = Path("output/tables/source_color_stats.csv")
+    export_color_stats_to_csv(color_stats_df, str(source_stats_csv))
 
-    print("\nTop 10 rows:")
-    print(color_stats_df.head(10).to_string(index=False))
+    # Replacement palette stats
+    palette_data = load_palette_from_json(palette_path)
+    palette_df = build_palette_dataframe(palette_data=palette_data, total_pixels=total_pixels)
 
-    # Export CSV
-    output_csv_path = Path("output/tables/source_color_stats.csv")
-    export_color_stats_to_csv(color_stats_df, str(output_csv_path))
+    palette_csv = Path("output/tables/replacement_palette.csv")
+    export_palette_to_csv(palette_df, palette_csv)
 
-    print(f"\nSaved color stats table to: {output_csv_path}")
+    print(f"\nPalette name: {palette_data.get('name', 'unnamed_palette')}")
+    print(f"Replacement colors: {len(palette_df)}")
+    print(f"Sum of replacement quotas: {int(palette_df['Quota'].sum())}")
+
+    if int(palette_df["Quota"].sum()) != total_pixels:
+        raise ValueError("Palette quota sanity check failed: quotas do not sum to total pixels.")
+
+    print("Palette quota sanity check passed.")
+
+    print("\nReplacement palette preview:")
+    print(palette_df.head(10).to_string(index=False))
+
+    print(f"\nSaved source stats to: {source_stats_csv}")
+    print(f"Saved replacement palette to: {palette_csv}")
 
 
 if __name__ == "__main__":
     main()
-
-    

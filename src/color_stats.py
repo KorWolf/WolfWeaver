@@ -33,7 +33,7 @@ def rgb_to_hex(rgb: RGBTuple) -> str:
 
 def calculate_saturation(rgb: RGBTuple) -> int:
     """
-    Saturation used in your Excel method:
+    Saturation used in Excel method:
     max(R, G, B) - min(R, G, B)
     """
     return max(rgb) - min(rgb)
@@ -41,7 +41,7 @@ def calculate_saturation(rgb: RGBTuple) -> int:
 
 def calculate_lightness(rgb: RGBTuple) -> float:
     """
-    Lightness used in your Excel method:
+    Lightness used in Excel method:
     average of R, G, B
     """
     return sum(rgb) / 3.0
