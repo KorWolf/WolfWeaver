@@ -1,3 +1,4 @@
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
@@ -7,11 +8,23 @@ from src.color_stats import build_color_stats_dataframe, extract_color_frequenci
 from src.image_io import load_image
 
 
+# ============================================================
+# Basic color helpers
+# ============================================================
+
 def rgb_array_to_hex(rgb: np.ndarray) -> str:
     """
     Convert a length-3 RGB array into a hex color string.
     """
     r, g, b = [int(np.clip(round(channel), 0, 255)) for channel in rgb]
+    return f"#{r:02X}{g:02X}{b:02X}"
+
+
+def rgb_tuple_to_hex(rgb: tuple[int, int, int]) -> str:
+    """
+    Convert an integer RGB tuple into a hex color string.
+    """
+    r, g, b = rgb
     return f"#{r:02X}{g:02X}{b:02X}"
 
 
@@ -42,7 +55,15 @@ def calculate_rgb_distance(color_a: np.ndarray, color_b: np.ndarray) -> float:
     return float(np.linalg.norm(color_a - color_b))
 
 
-def sample_image_pixels(image_array: np.ndarray, max_samples: int = 50000, random_seed: int = 42) -> np.ndarray:
+# ============================================================
+# Pixel preparation helpers
+# ============================================================
+
+def sample_image_pixels(
+    image_array: np.ndarray,
+    max_samples: int = 50000,
+    random_seed: int = 42,
+) -> np.ndarray:
     """
     Flatten image pixels to shape (N, 3) and randomly sample if needed.
 
@@ -88,42 +109,96 @@ def cluster_pixels_kmeans(
     return centroids, labels
 
 
+# ============================================================
+# Cluster representative helpers
+# ============================================================
+
+def get_nearest_real_rgb_for_cluster(
+    cluster_pixels: np.ndarray,
+    centroid_rgb: np.ndarray,
+) -> np.ndarray:
+    """
+    Choose the actual cluster pixel closest to the centroid.
+
+    This avoids inventing new colors that were not in the image.
+    """
+    distances = np.linalg.norm(cluster_pixels - centroid_rgb, axis=1)
+    nearest_index = int(np.argmin(distances))
+    return cluster_pixels[nearest_index]
+
+
+def get_most_frequent_real_rgb_for_cluster(
+    cluster_pixels: np.ndarray,
+) -> np.ndarray:
+    """
+    Choose the most frequent exact RGB color inside the cluster.
+
+    Ties are broken by lexicographic RGB ordering for stability.
+    """
+    rgb_tuples = [tuple(int(channel) for channel in pixel) for pixel in cluster_pixels]
+    frequency_counter = Counter(rgb_tuples)
+
+    most_common_items = frequency_counter.most_common()
+    highest_count = most_common_items[0][1]
+
+    tied_colors = [rgb for rgb, count in most_common_items if count == highest_count]
+    chosen_rgb = min(tied_colors)
+
+    return np.asarray(chosen_rgb, dtype=np.float64)
+
+
 def build_cluster_records(
     centroids: np.ndarray,
     labels: np.ndarray,
     sampled_pixels: np.ndarray,
+    representative_mode: str = "nearest_real",
 ) -> list[dict]:
     """
     Build metadata records for each cluster.
 
-    Each record includes:
-    - centroid RGB
-    - hex
-    - pixel count
-    - size ratio
-    - saturation
-    - lightness
-    - distinctiveness from global mean
+    representative_mode:
+    - nearest_real: use the real pixel nearest to the centroid
+    - most_frequent_real: use the most common exact color in the cluster
     """
+    if representative_mode not in {"nearest_real", "most_frequent_real"}:
+        raise ValueError(
+            f"Unsupported representative_mode: {representative_mode}"
+        )
+
     total_pixels = len(sampled_pixels)
     global_mean = np.mean(sampled_pixels, axis=0)
 
     records: list[dict] = []
 
     for cluster_index, centroid in enumerate(centroids):
-        count = int(np.sum(labels == cluster_index))
+        cluster_mask = labels == cluster_index
+        count = int(np.sum(cluster_mask))
+
         if count <= 0:
             continue
 
-        rgb = np.asarray(centroid, dtype=np.float64)
-        saturation = calculate_rgb_saturation(rgb)
-        lightness = calculate_rgb_lightness(rgb)
-        distance_from_global_mean = calculate_rgb_distance(rgb, global_mean)
+        cluster_pixels = sampled_pixels[cluster_mask]
+
+        if representative_mode == "nearest_real":
+            representative_rgb = get_nearest_real_rgb_for_cluster(
+                cluster_pixels=cluster_pixels,
+                centroid_rgb=centroid,
+            )
+        else:
+            representative_rgb = get_most_frequent_real_rgb_for_cluster(
+                cluster_pixels=cluster_pixels,
+            )
+
+        representative_rgb = np.asarray(representative_rgb, dtype=np.float64)
+
+        saturation = calculate_rgb_saturation(representative_rgb)
+        lightness = calculate_rgb_lightness(representative_rgb)
+        distance_from_global_mean = calculate_rgb_distance(representative_rgb, global_mean)
 
         records.append(
             {
-                "rgb": rgb,
-                "hex": rgb_array_to_hex(rgb),
+                "rgb": representative_rgb,
+                "hex": rgb_array_to_hex(representative_rgb),
                 "count": count,
                 "size_ratio": count / total_pixels,
                 "saturation": saturation,
@@ -134,6 +209,10 @@ def build_cluster_records(
 
     return records
 
+
+# ============================================================
+# Cluster scoring helpers
+# ============================================================
 
 def normalize_values(values: list[float]) -> list[float]:
     """
@@ -193,7 +272,15 @@ def score_cluster_records(cluster_records: list[dict]) -> list[dict]:
     return scored_records
 
 
-def can_add_color(candidate_rgb: np.ndarray, selected_rgbs: list[np.ndarray], min_color_distance: float) -> bool:
+# ============================================================
+# Final palette selection helpers
+# ============================================================
+
+def can_add_color(
+    candidate_rgb: np.ndarray,
+    selected_rgbs: list[np.ndarray],
+    min_color_distance: float,
+) -> bool:
     """
     Return True if the candidate color is far enough away from all selected colors.
     """
@@ -281,6 +368,10 @@ def select_clustered_palette_colors(
     return [record["hex"] for record in selected_records[:color_count]]
 
 
+# ============================================================
+# Public extraction methods
+# ============================================================
+
 def extract_top_image_palette_colors(
     image_path: Path,
     color_count: int,
@@ -313,16 +404,14 @@ def extract_clustered_main_palette_colors(
     preserve_lightest: bool = True,
     min_color_distance: float = 28.0,
     random_seed: int = 42,
+    representative_mode: str = "nearest_real",
 ) -> list[str]:
     """
     Extract a palette of representative "main colors" from the image.
 
-    This method:
-    - clusters similar colors together
-    - ranks clusters by a balanced score
-    - selects final colors with minimum-distance filtering
-
-    This is intended to be more user-friendly than raw top-frequency picking.
+    representative_mode:
+    - nearest_real: choose the actual pixel nearest to each cluster centroid
+    - most_frequent_real: choose the most common exact color inside each cluster
     """
     if color_count < 1:
         raise ValueError("Image-derived palette color count must be at least 1.")
@@ -350,6 +439,7 @@ def extract_clustered_main_palette_colors(
         centroids=centroids,
         labels=labels,
         sampled_pixels=sampled_pixels,
+        representative_mode=representative_mode,
     )
 
     scored_records = score_cluster_records(cluster_records)

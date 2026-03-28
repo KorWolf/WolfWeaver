@@ -31,7 +31,6 @@ app = Flask(
     static_folder="static",
 )
 
-# In-memory job state for active runs.
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
 
@@ -56,7 +55,7 @@ def build_default_form_values() -> dict:
 
     return {
         "palette_source": "manual",
-        "image_palette_method": "clustered_main",
+        "image_palette_method": "clustered_main_nearest",
         "image_palette_count": default_palette_size,
         "frame_count": int(defaults["frame_count"]),
         "reconstruction_mode": str(defaults["reconstruction_mode"]),
@@ -259,7 +258,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
 
     form_values = {
         "palette_source": request.form.get("palette_source", "manual"),
-        "image_palette_method": request.form.get("image_palette_method", "clustered_main"),
+        "image_palette_method": request.form.get("image_palette_method", "clustered_main_nearest"),
         "image_palette_count": request.form.get("image_palette_count", "8"),
         "frame_count": request.form.get("frame_count", str(defaults["frame_count"])),
         "reconstruction_mode": request.form.get(
@@ -287,7 +286,11 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         raise ValueError("Invalid palette source.")
 
     image_palette_method = form_values["image_palette_method"]
-    if image_palette_method not in {"clustered_main", "top_frequency"}:
+    if image_palette_method not in {
+        "clustered_main_nearest",
+        "clustered_main_frequency",
+        "top_frequency",
+    }:
         raise ValueError("Invalid image-derived palette method.")
 
     frame_count = validate_positive_int(form_values["frame_count"], "Frame count", minimum=1)
@@ -329,7 +332,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     else:
         source_image_path = Path(source_image)
 
-        if image_palette_method == "clustered_main":
+        if image_palette_method == "clustered_main_nearest":
             palette_colors = extract_clustered_main_palette_colors(
                 image_path=source_image_path,
                 color_count=image_palette_count,
@@ -337,6 +340,17 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
                 preserve_lightest=True,
                 min_color_distance=28.0,
                 random_seed=random_seed,
+                representative_mode="nearest_real",
+            )
+        elif image_palette_method == "clustered_main_frequency":
+            palette_colors = extract_clustered_main_palette_colors(
+                image_path=source_image_path,
+                color_count=image_palette_count,
+                preserve_darkest=True,
+                preserve_lightest=True,
+                min_color_distance=28.0,
+                random_seed=random_seed,
+                representative_mode="most_frequent_real",
             )
         else:
             palette_colors = extract_top_image_palette_colors(

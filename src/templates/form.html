@@ -109,12 +109,15 @@
                 <div id="image-palette-controls">
                     <label for="image_palette_method">Image-derived palette method</label>
                     <select id="image_palette_method" name="image_palette_method">
-                        <option value="clustered_main" {% if values.image_palette_method == "clustered_main" %}selected{% endif %}>Main colors</option>
+                        <option value="clustered_main_nearest" {% if values.image_palette_method == "clustered_main_nearest" %}selected{% endif %}>Main colors (nearest real)</option>
+                        <option value="clustered_main_frequency" {% if values.image_palette_method == "clustered_main_frequency" %}selected{% endif %}>Main colors (most frequent in cluster)</option>
                         <option value="top_frequency" {% if values.image_palette_method == "top_frequency" %}selected{% endif %}>Top frequency</option>
                     </select>
 
                     <p class="help-text">
-                        Main colors tries to find representative major color groups. Top frequency uses the most common exact colors.
+                        Main colors (nearest real) chooses the real image color closest to each cluster center.
+                        Main colors (most frequent in cluster) chooses the most common exact color inside each cluster.
+                        Top frequency uses the most common exact colors overall.
                     </p>
 
                     <label for="image_palette_count">Image-derived palette color count</label>
