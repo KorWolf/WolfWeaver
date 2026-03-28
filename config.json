@@ -1,12 +1,21 @@
 {
     "source_image": "input/source_images/birthOfVenus.png",
+
     "palette_file": "input/palettes/example_palette.json",
+
     "frame_count": 10,
+
     "save_debug_tables": false,
+
     "create_gif": true,
-    "gif_frame_duration_ms": 150,
-    "gif_output_name": "rotating_palette.gif",
+    "gif_frame_duration_ms": 120,
+    "gif_output_name": "output.gif",
+
     "frame_prefix": "frame",
-    "reconstruction_mode": "random_seeded",
+
+    "reconstruction_mode": "scanline",
+
+    "score_mode": "accent_aware",
+
     "random_seed": 42
 }

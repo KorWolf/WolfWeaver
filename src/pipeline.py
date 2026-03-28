@@ -38,10 +38,9 @@ from src.run_manager import (
 # ============================================================
 # Palette resolution helpers
 # ============================================================
-# These helpers decide where the palette comes from.
-# A run can either:
-# - use palette colors passed directly in the runtime config
-# - or load a palette JSON file from disk
+# A run can get its palette from either:
+# - palette_colors already present in runtime config
+# - palette_file on disk
 # ============================================================
 
 def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
@@ -49,13 +48,8 @@ def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
     Resolve the palette data used for the run.
 
     Priority:
-    1. If palette_colors is present in config, use those directly.
-       This is what the web UI does after parsing the textarea.
-    2. Otherwise, load the palette from the palette_file path.
-
-    Returns a dict with:
-    - name
-    - colors
+    1. Use palette_colors directly if present in config
+    2. Otherwise load palette JSON from palette_file
     """
     palette_colors = config.get("palette_colors")
 
@@ -78,8 +72,6 @@ def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
 # ============================================================
 # Runtime config validation
 # ============================================================
-# These checks validate values that affect processing behavior.
-# ============================================================
 
 def validate_runtime_config(config: dict[str, Any]) -> None:
     """
@@ -100,15 +92,15 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
 
 
 # ============================================================
-# Single-rotation runner
+# Single rotation runner
 # ============================================================
-# A "rotation" means:
+# One "rotation" means:
 # - rotate the palette ordering
 # - build quotas for that rotated palette
-# - calculate differences
-# - assign source colors to replacement colors
+# - calculate source/replacement differences
+# - build the assignment table
 # - reconstruct the image using the selected reconstruction mode
-# - save the frame
+# - save one frame
 # ============================================================
 
 def run_single_rotation(
@@ -119,6 +111,7 @@ def run_single_rotation(
     total_pixels: int,
     frame_prefix: str,
     reconstruction_mode: str,
+    score_mode: str,
     random_seed: int,
     run_subdirs: dict[str, Path],
     save_debug_tables: bool = False,
@@ -142,26 +135,30 @@ def run_single_rotation(
         "colors": rotated_colors,
     }
 
+    # Build the ordered replacement palette with quotas for this rotation.
     palette_df = build_palette_dataframe(
         palette_data=rotated_palette_data,
         total_pixels=total_pixels,
     )
 
-    # Sanity check: the palette quotas should always add up to the total
-    # number of pixels in the source image.
+    # Sanity check: total quota must equal total image pixels.
     if int(palette_df["Quota"].sum()) != total_pixels:
         raise ValueError("Palette quota sanity check failed during rotation run.")
 
+    # Build score tables using the selected score mode.
     difference_df = build_difference_matrix(
         source_df=color_stats_df,
         palette_df=palette_df,
+        score_mode=score_mode,
     )
 
     long_difference_df = build_long_difference_table(
         source_df=color_stats_df,
         palette_df=palette_df,
+        score_mode=score_mode,
     )
 
+    # Build the assignment table that maps source colors to replacement colors.
     assignment_df = build_assignment_table(
         source_df=color_stats_df,
         palette_df=palette_df,
@@ -170,6 +167,7 @@ def run_single_rotation(
 
     assignment_summary_df = build_assignment_summary(assignment_df)
 
+    # Reconstruct the image using the selected reconstruction mode.
     output_image_array = reconstruct_image_from_assignments(
         image_array=image_array,
         assignment_df=assignment_df,
@@ -180,6 +178,7 @@ def run_single_rotation(
     frame_path = run_subdirs["frames"] / f"{frame_prefix}_{rotation_index:03d}.png"
     save_image_array(output_image_array, frame_path)
 
+    # Optional debug exports for inspection.
     if save_debug_tables:
         palette_csv = run_subdirs["debug"] / f"palette_rot_{rotation_index:03d}.csv"
         difference_preview_csv = run_subdirs["debug"] / f"difference_rot_{rotation_index:03d}.csv"
@@ -199,13 +198,13 @@ def run_single_rotation(
 # ============================================================
 # Streaming pipeline
 # ============================================================
-# This generator is used by the Flask background job system.
-# It yields progress updates as frames complete.
+# This generator is used by the Flask job system.
+# It yields progress updates as work completes.
 # ============================================================
 
 def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
     """
-    Run the full pipeline and yield progress updates throughout the run.
+    Run the full pipeline and yield progress updates.
 
     Yield stages:
     - started
@@ -224,11 +223,13 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     gif_output_name = str(config["gif_output_name"])
     frame_prefix = str(config["frame_prefix"])
     reconstruction_mode = str(config["reconstruction_mode"])
+    score_mode = str(config.get("score_mode", "basic_rgb_sl"))
     random_seed = int(config["random_seed"])
 
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
 
+    # Prepare run output folders and save a config snapshot for traceability.
     run_dir = create_run_directory()
     run_subdirs = create_run_subdirectories(run_dir)
     config_snapshot_path = save_config_snapshot(config, run_dir)
@@ -236,6 +237,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     base_palette_data = resolve_palette_data(config)
     palette_size = len(base_palette_data["colors"])
 
+    # Load source image and derive basic image stats.
     image_array = load_image(image_path)
     height, width = get_image_dimensions(image_array)
     total_pixels = width * height
@@ -246,6 +248,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     if total_pixels != sum_counts:
         raise ValueError("Sanity check failed: total pixel count does not match summed frequencies.")
 
+    # Build and export source color stats once for the whole run.
     color_stats_df = build_color_stats_dataframe(color_freq)
     source_stats_csv = run_subdirs["tables"] / "source_color_stats.csv"
     export_color_stats_to_csv(color_stats_df, str(source_stats_csv))
@@ -253,7 +256,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     frame_paths: list[Path] = []
     frame_timings: list[float] = []
 
-    # Initial update so the UI can show metadata before the first frame finishes.
+    # Initial progress update so the UI can render metadata before frame 1 finishes.
     yield {
         "status": "started",
         "run_dir": run_dir,
@@ -271,9 +274,11 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
         "palette_name": base_palette_data.get("name", "unnamed_palette"),
         "palette_size": palette_size,
         "reconstruction_mode": reconstruction_mode,
+        "score_mode": score_mode,
         "completed_frames": 0,
     }
 
+    # Build one frame for each requested rotation.
     for rotation_index in range(frame_count):
         frame_start = time.perf_counter()
 
@@ -285,6 +290,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
             total_pixels=total_pixels,
             frame_prefix=frame_prefix,
             reconstruction_mode=reconstruction_mode,
+            score_mode=score_mode,
             random_seed=random_seed,
             run_subdirs=run_subdirs,
             save_debug_tables=save_debug_tables,
@@ -313,11 +319,13 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
             "palette_name": base_palette_data.get("name", "unnamed_palette"),
             "palette_size": palette_size,
             "reconstruction_mode": reconstruction_mode,
+            "score_mode": score_mode,
             "completed_frames": len(frame_paths),
         }
 
     gif_path: Path | None = None
 
+    # Optional GIF creation after all frames are complete.
     if create_gif:
         gif_path = run_dir / "gifs" / gif_output_name
         create_gif_from_frames(
@@ -346,6 +354,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
         "palette_name": base_palette_data.get("name", "unnamed_palette"),
         "palette_size": palette_size,
         "reconstruction_mode": reconstruction_mode,
+        "score_mode": score_mode,
         "completed_frames": len(frame_paths),
     }
 
@@ -353,8 +362,8 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
 # ============================================================
 # Non-streaming wrapper
 # ============================================================
-# This is used by the CLI entry point. It runs the same pipeline
-# but only returns the final completed result.
+# This is used by the CLI entry point.
+# It runs the same pipeline but only returns the final result.
 # ============================================================
 
 def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:

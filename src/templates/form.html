@@ -175,6 +175,21 @@
 
                 <div class="field-row">
                     <div class="field">
+                        <label for="score_mode">Score mode</label>
+                        <select id="score_mode" name="score_mode" required>
+                            {% for mode in score_mode_options %}
+                                <option
+                                    value="{{ mode.value }}"
+                                    {% if values.score_mode == mode.value %}selected{% endif %}
+                                >
+                                    {{ mode.label }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <div id="score-mode-description" class="setting-description" aria-live="polite"></div>
+                    </div>
+
+                    <div class="field">
                         <label for="random_seed">Random seed</label>
                         <input
                             id="random_seed"
@@ -189,7 +204,9 @@
                             Used by seeded random modes. The same seed gives the same result.
                         </p>
                     </div>
+                </div>
 
+                <div class="field-row">
                     <div class="field checkbox-field">
                         <input
                             id="create_gif"
@@ -199,9 +216,7 @@
                         >
                         <label for="create_gif">Create GIF</label>
                     </div>
-                </div>
 
-                <div class="field-row">
                     <div class="field">
                         <label for="gif_frame_duration_ms">GIF frame duration (ms)</label>
                         <input
@@ -217,7 +232,9 @@
                             Lower values make the GIF play faster. This does not change render time.
                         </p>
                     </div>
+                </div>
 
+                <div class="field-row">
                     <div class="field">
                         <label for="frame_prefix">Frame filename prefix</label>
                         <input
@@ -231,20 +248,20 @@
                             Used when naming the saved frame image files.
                         </p>
                     </div>
-                </div>
 
-                <div class="field">
-                    <label for="gif_output_name">GIF filename</label>
-                    <input
-                        id="gif_output_name"
-                        name="gif_output_name"
-                        type="text"
-                        value="{{ values.gif_output_name }}"
-                        required
-                    >
-                    <p class="help-text">
-                        Used when naming the saved GIF file.
-                    </p>
+                    <div class="field">
+                        <label for="gif_output_name">GIF filename</label>
+                        <input
+                            id="gif_output_name"
+                            name="gif_output_name"
+                            type="text"
+                            value="{{ values.gif_output_name }}"
+                            required
+                        >
+                        <p class="help-text">
+                            Used when naming the saved GIF file.
+                        </p>
+                    </div>
                 </div>
             </fieldset>
 
@@ -258,12 +275,14 @@
         const paletteSourceField = document.getElementById("palette_source");
         const imagePaletteMethodField = document.getElementById("image_palette_method");
         const modeField = document.getElementById("reconstruction_mode");
+        const scoreModeField = document.getElementById("score_mode");
         const seedField = document.getElementById("random_seed");
         const frameCountField = document.getElementById("frame_count");
         const paletteField = document.getElementById("palette_text");
         const presetField = document.getElementById("selected_preset");
         const swatchGrid = document.getElementById("palette-swatch-grid");
         const modeDescription = document.getElementById("mode-description");
+        const scoreModeDescription = document.getElementById("score-mode-description");
 
         const manualPaletteControls = document.getElementById("manual-palette-controls");
         const imagePaletteControls = document.getElementById("image-palette-controls");
@@ -274,9 +293,14 @@
 
         const palettePresets = {{ palette_presets|tojson|safe }};
         const reconstructionModes = {{ reconstruction_modes|tojson|safe }};
+        const scoreModeOptions = {{ score_mode_options|tojson|safe }};
 
         function getSelectedModeConfig() {
             return reconstructionModes.find(mode => mode.value === modeField.value) || null;
+        }
+
+        function getSelectedScoreModeConfig() {
+            return scoreModeOptions.find(mode => mode.value === scoreModeField.value) || null;
         }
 
         function syncSeedState() {
@@ -288,6 +312,11 @@
         function updateModeDescription() {
             const selectedMode = getSelectedModeConfig();
             modeDescription.textContent = selectedMode ? selectedMode.description : "";
+        }
+
+        function updateScoreModeDescription() {
+            const selectedMode = getSelectedScoreModeConfig();
+            scoreModeDescription.textContent = selectedMode ? selectedMode.description : "";
         }
 
         function syncPaletteSourceState() {
@@ -390,6 +419,10 @@
             updateModeDescription();
         });
 
+        scoreModeField.addEventListener("change", () => {
+            updateScoreModeDescription();
+        });
+
         paletteSourceField.addEventListener("change", () => {
             syncPaletteSourceState();
             updateAdvisory();
@@ -407,6 +440,7 @@
 
         syncSeedState();
         updateModeDescription();
+        updateScoreModeDescription();
         syncPaletteSourceState();
         updateAdvisory();
         renderSwatches();

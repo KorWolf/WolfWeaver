@@ -16,6 +16,7 @@ from src.palette_source import (
 )
 from src.pipeline import run_pipeline_stream
 from src.reconstruction_modes import RECONSTRUCTION_MODES, get_reconstruction_mode_values
+from src.score_modes import get_score_mode_values
 
 
 HEX_COLOR_PATTERN = re.compile(r"^#?[0-9A-Fa-f]{6}$")
@@ -30,17 +31,25 @@ app = Flask(
     static_folder="static",
 )
 
+# In-memory job state for active runs.
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
 
 
 def load_default_palette_text() -> str:
+    """
+    Load the default palette file from config.json and convert it to
+    textarea-friendly text, one hex color per line.
+    """
     defaults = load_config(Path("config.json"))
     palette_data = load_palette_from_json(Path(defaults["palette_file"]))
     return "\n".join(str(color).upper() for color in palette_data["colors"])
 
 
 def build_default_form_values() -> dict:
+    """
+    Build default values for the main form from config.json.
+    """
     defaults = load_config(Path("config.json"))
     default_palette_text = load_default_palette_text()
     default_palette_size = len(parse_palette_text(default_palette_text))
@@ -51,6 +60,7 @@ def build_default_form_values() -> dict:
         "image_palette_count": default_palette_size,
         "frame_count": int(defaults["frame_count"]),
         "reconstruction_mode": str(defaults["reconstruction_mode"]),
+        "score_mode": str(defaults["score_mode"]),
         "random_seed": int(defaults["random_seed"]),
         "create_gif": bool(defaults["create_gif"]),
         "gif_frame_duration_ms": int(defaults["gif_frame_duration_ms"]),
@@ -63,10 +73,10 @@ def build_default_form_values() -> dict:
 
 def build_palette_preset_display_options() -> list[dict]:
     """
-    Build display metadata for palette presets.
+    Build display labels for preset palettes.
 
-    If the preset key already ends with its color count, do not append the count again.
-    Otherwise append the count to the label.
+    If the preset key already ends with its color count, do not append
+    the count again.
     """
     display_options: list[dict] = []
 
@@ -92,7 +102,33 @@ def build_palette_preset_display_options() -> list[dict]:
     return display_options
 
 
+def build_score_mode_options() -> list[dict]:
+    """
+    Build display labels and descriptions for score modes shown in the UI.
+    """
+    return [
+        {
+            "value": "basic_rgb_sl",
+            "label": "Basic RGB / S / L",
+            "description": "Baseline score using RGB difference plus saturation and lightness difference.",
+        },
+        {
+            "value": "weighted_rgb_sl",
+            "label": "Weighted RGB / S / L",
+            "description": "Weighted version of the baseline score that changes how strongly RGB, saturation, and lightness differences affect matching.",
+        },
+        {
+            "value": "accent_aware",
+            "label": "Accent aware",
+            "description": "Makes saturation mismatches matter more for saturated source colors, which can help preserve accents like eyes, tongues, and other vivid details.",
+        },
+    ]
+
+
 def parse_palette_text(palette_text: str) -> list[str]:
+    """
+    Parse the palette textarea into a normalized list of hex colors.
+    """
     lines = [line.strip() for line in palette_text.splitlines()]
     lines = [line for line in lines if line]
 
@@ -118,6 +154,9 @@ def parse_palette_text(palette_text: str) -> list[str]:
 
 
 def validate_positive_int(value: str, field_name: str, minimum: int = 1) -> int:
+    """
+    Validate that a submitted value is an integer >= minimum.
+    """
     try:
         int_value = int(value)
     except Exception as error:
@@ -130,6 +169,9 @@ def validate_positive_int(value: str, field_name: str, minimum: int = 1) -> int:
 
 
 def validate_safe_name(value: str, field_name: str) -> str:
+    """
+    Validate names used for output files.
+    """
     normalized = value.strip()
 
     if not normalized:
@@ -145,6 +187,9 @@ def validate_safe_name(value: str, field_name: str) -> str:
 
 
 def validate_image_upload(file_storage) -> Path | None:
+    """
+    Validate and save an uploaded image file.
+    """
     if file_storage is None or not file_storage.filename:
         return None
 
@@ -165,6 +210,9 @@ def validate_image_upload(file_storage) -> Path | None:
 
 
 def build_frame_count_message(frame_count: int, palette_size: int) -> str | None:
+    """
+    Build a user-facing advisory about frame count vs palette size.
+    """
     if frame_count == palette_size:
         return None
 
@@ -181,18 +229,27 @@ def build_frame_count_message(frame_count: int, palette_size: int) -> str | None
 
 
 def build_runtime_text(total_runtime_seconds: float) -> str:
+    """
+    Format total runtime in minutes and seconds.
+    """
     minutes = int(total_runtime_seconds // 60)
     seconds = total_runtime_seconds % 60
     return f"{minutes}m {seconds:.2f}s"
 
 
 def build_duration_text(total_seconds: float) -> str:
+    """
+    Format a duration in minutes and seconds.
+    """
     minutes = int(total_seconds // 60)
     seconds = total_seconds % 60
     return f"{minutes}m {seconds:.2f}s"
 
 
 def build_config_from_request() -> tuple[dict, dict, str | None]:
+    """
+    Read form input, validate it, and build the runtime config.
+    """
     defaults = load_config(Path("config.json"))
 
     form_values = {
@@ -204,6 +261,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
             "reconstruction_mode",
             str(defaults["reconstruction_mode"]),
         ),
+        "score_mode": request.form.get("score_mode", str(defaults["score_mode"])),
         "random_seed": request.form.get("random_seed", str(defaults["random_seed"])),
         "create_gif": "create_gif" in request.form,
         "gif_frame_duration_ms": request.form.get(
@@ -243,6 +301,10 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     reconstruction_mode = form_values["reconstruction_mode"]
     if reconstruction_mode not in set(get_reconstruction_mode_values()):
         raise ValueError("Invalid reconstruction mode.")
+
+    score_mode = form_values["score_mode"]
+    if score_mode not in set(get_score_mode_values()):
+        raise ValueError("Invalid score mode.")
 
     frame_prefix = validate_safe_name(form_values["frame_prefix"], "Frame prefix")
     gif_output_name = validate_safe_name(form_values["gif_output_name"], "GIF output name")
@@ -294,6 +356,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         "gif_output_name": gif_output_name,
         "frame_prefix": frame_prefix,
         "reconstruction_mode": reconstruction_mode,
+        "score_mode": score_mode,
         "random_seed": random_seed,
     }
 
@@ -302,11 +365,17 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
 
 
 def run_file_url(path: Path) -> str:
+    """
+    Convert a run file path into a browser-accessible URL.
+    """
     relative_path = path.resolve().relative_to(RUNS_ROOT)
     return url_for("serve_run_file", subpath=relative_path.as_posix())
 
 
 def serialize_update(update: dict) -> dict:
+    """
+    Convert a pipeline progress update into JSON-safe output for the UI.
+    """
     frame_urls = [
         run_file_url(path)
         for path in update.get("frame_paths", [])
@@ -363,6 +432,7 @@ def serialize_update(update: dict) -> dict:
         "palette_name": update.get("palette_name"),
         "palette_size": update.get("palette_size"),
         "reconstruction_mode": update.get("reconstruction_mode"),
+        "score_mode": update.get("score_mode"),
         "frame_urls": frame_urls,
         "gif_url": gif_url,
         "first_frame_seconds": first_frame_seconds,
@@ -379,6 +449,9 @@ def serialize_update(update: dict) -> dict:
 
 
 def worker(job_id: str, config: dict) -> None:
+    """
+    Run the pipeline in a background thread and keep job state updated.
+    """
     try:
         for update in run_pipeline_stream(config):
             with jobs_lock:
@@ -392,6 +465,9 @@ def worker(job_id: str, config: dict) -> None:
 
 @app.route("/", methods=["GET"])
 def form_page():
+    """
+    Render the main form page.
+    """
     form_values = build_default_form_values()
 
     try:
@@ -410,11 +486,15 @@ def form_page():
         palette_presets=PALETTE_PRESETS,
         palette_preset_options=build_palette_preset_display_options(),
         reconstruction_modes=RECONSTRUCTION_MODES,
+        score_mode_options=build_score_mode_options(),
     )
 
 
 @app.route("/start", methods=["POST"])
 def start_run():
+    """
+    Validate input, create a background job, and redirect to the run page.
+    """
     try:
         config, form_values, advisory = build_config_from_request()
         job_id = uuid.uuid4().hex
@@ -444,6 +524,7 @@ def start_run():
                 "reconstruction_mode",
                 defaults["reconstruction_mode"],
             ),
+            "score_mode": request.form.get("score_mode", defaults["score_mode"]),
             "random_seed": request.form.get("random_seed", defaults["random_seed"]),
             "create_gif": "create_gif" in request.form,
             "gif_frame_duration_ms": request.form.get(
@@ -477,11 +558,15 @@ def start_run():
             palette_presets=PALETTE_PRESETS,
             palette_preset_options=build_palette_preset_display_options(),
             reconstruction_modes=RECONSTRUCTION_MODES,
+            score_mode_options=build_score_mode_options(),
         ), 400
 
 
 @app.route("/run/<job_id>", methods=["GET"])
 def run_page(job_id: str):
+    """
+    Render the live run progress page.
+    """
     with jobs_lock:
         job = jobs.get(job_id)
 
@@ -497,6 +582,9 @@ def run_page(job_id: str):
 
 @app.route("/api/run/<job_id>", methods=["GET"])
 def run_status(job_id: str):
+    """
+    Return live JSON progress data for a run.
+    """
     with jobs_lock:
         job = jobs.get(job_id)
 
@@ -534,10 +622,16 @@ def run_status(job_id: str):
 
 @app.route("/runs/<path:subpath>", methods=["GET"])
 def serve_run_file(subpath: str):
+    """
+    Serve generated files from the run output directory.
+    """
     return send_from_directory(RUNS_ROOT, subpath)
 
 
 def main() -> None:
+    """
+    Start the Flask development server.
+    """
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
 
 
