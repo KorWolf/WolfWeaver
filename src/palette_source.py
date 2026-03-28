@@ -1005,7 +1005,7 @@ def extract_clustered_main_palette_colors(
     )
 
     internal_cluster_count = max(color_count * 3, 16)
-    internal_cluster_count = min(internal_cluster_count, 500, len(sampled_pixels))
+    internal_cluster_count = min(internal_cluster_count, 100, len(sampled_pixels))
 
     centroids, labels = cluster_pixels_kmeans(
         pixels=sampled_pixels,
