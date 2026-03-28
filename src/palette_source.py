@@ -75,7 +75,7 @@ def calculate_warmth(rgb: np.ndarray) -> float:
     Estimate how warm a color feels.
 
     Higher values mean the color leans more toward warm red/yellow
-    families, which helps the diverse selection mode avoid over-filling
+    families, which helps the diverse selection modes avoid over-filling
     with too many warm variants.
     """
     rgb = np.asarray(rgb, dtype=np.float64)
@@ -640,7 +640,125 @@ def select_clustered_palette_colors_diverse(
                 add_record(record)
                 break
         else:
-            # Final fallback: fill whatever remains by rank.
+            for record in cluster_records:
+                if record["hex"] in selected_hexes:
+                    continue
+
+                add_record(record)
+                break
+            else:
+                break
+
+    return [record["hex"] for record in selected_records[:color_count]]
+
+
+def select_clustered_palette_colors_low_variety(
+    cluster_records: list[dict],
+    color_count: int,
+    preserve_darkest: bool = True,
+    preserve_lightest: bool = True,
+    min_color_distance: float = 32.0,
+) -> list[str]:
+    """
+    Select the final palette from scored cluster records for low-variety images.
+
+    This mode is designed to:
+    - prefer dominant exact colors
+    - preserve clarity
+    - avoid forcing broad hue-family diversity
+    - avoid spending slots on tiny outlier colors
+    """
+    if color_count < 1:
+        raise ValueError("color_count must be at least 1.")
+
+    if len(cluster_records) == 0:
+        raise ValueError("No cluster records were available for palette selection.")
+
+    selected_records: list[dict] = []
+    selected_rgbs: list[np.ndarray] = []
+    selected_hexes: set[str] = set()
+
+    def add_record(record: dict) -> None:
+        selected_records.append(record)
+        selected_rgbs.append(record["rgb"])
+        selected_hexes.add(record["hex"])
+
+    def try_add_anchor(record: dict, distance_threshold: float) -> bool:
+        if record["hex"] in selected_hexes:
+            return False
+
+        if can_add_color(record["rgb"], selected_rgbs, distance_threshold):
+            add_record(record)
+            return True
+
+        return False
+
+    if preserve_darkest:
+        darkest_record = min(cluster_records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(darkest_record, 0.0)
+
+    if preserve_lightest and len(selected_records) < color_count:
+        lightest_record = max(cluster_records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(lightest_record, min_color_distance)
+
+    while len(selected_records) < color_count:
+        best_candidate = None
+        best_candidate_score = None
+
+        for record in cluster_records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            # Stronger distinctness rule than the default mode to avoid
+            # near-duplicate clutter while keeping the palette clear.
+            if not can_add_color(record["rgb"], selected_rgbs, min_color_distance):
+                continue
+
+            candidate_score = float(record["priority_score"])
+
+            # Strongly reward dominant clusters.
+            candidate_score += record["size_ratio"] * 0.30
+
+            # Mildly reward structural lightness spread without forcing
+            # arbitrary hue diversity.
+            if len(selected_records) > 0:
+                nearest_selected_lightness_gap = min(
+                    abs(record["lightness"] - selected["lightness"])
+                    for selected in selected_records
+                )
+                candidate_score += min(nearest_selected_lightness_gap / 255.0, 0.08)
+
+            # Penalize tiny clusters so outlier colors do not steal slots.
+            if record["size_ratio"] < 0.008:
+                candidate_score -= 0.12
+            elif record["size_ratio"] < 0.015:
+                candidate_score -= 0.05
+
+            # Very mild reward for moderate saturation so the palette can
+            # still keep useful shading families when they are real.
+            if 20.0 <= record["saturation"] <= 110.0:
+                candidate_score += 0.02
+
+            if best_candidate is None or candidate_score > best_candidate_score:
+                best_candidate = record
+                best_candidate_score = candidate_score
+
+        if best_candidate is not None:
+            add_record(best_candidate)
+            continue
+
+        # Relax distance only slightly. This mode should still prefer
+        # clarity over stuffing in more edge-case colors.
+        relaxed_threshold = max(min_color_distance * 0.65, 14.0)
+
+        for record in cluster_records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            if can_add_color(record["rgb"], selected_rgbs, relaxed_threshold):
+                add_record(record)
+                break
+        else:
             for record in cluster_records:
                 if record["hex"] in selected_hexes:
                     continue
@@ -702,7 +820,8 @@ def extract_clustered_main_palette_colors(
     selection_mode:
     - standard: prioritize strongest clusters with distance filtering
     - balanced: mildly encourage hue-family spread
-    - diverse: prioritize stronger hue-family spread during final selection
+    - diverse: strongly encourage hue-family spread
+    - low_variety: prioritize dominant exact colors and clarity
     """
     if color_count < 1:
         raise ValueError("Image-derived palette color count must be at least 1.")
@@ -710,7 +829,7 @@ def extract_clustered_main_palette_colors(
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
 
-    if selection_mode not in {"standard", "balanced", "diverse"}:
+    if selection_mode not in {"standard", "balanced", "diverse", "low_variety"}:
         raise ValueError(f"Unsupported selection_mode: {selection_mode}")
 
     image_array = load_image(image_path)
@@ -754,6 +873,15 @@ def extract_clustered_main_palette_colors(
             preserve_darkest=preserve_darkest,
             preserve_lightest=preserve_lightest,
             min_color_distance=min_color_distance,
+        )
+
+    if selection_mode == "low_variety":
+        return select_clustered_palette_colors_low_variety(
+            cluster_records=scored_records,
+            color_count=color_count,
+            preserve_darkest=preserve_darkest,
+            preserve_lightest=preserve_lightest,
+            min_color_distance=max(min_color_distance, 32.0),
         )
 
     return select_clustered_palette_colors(
