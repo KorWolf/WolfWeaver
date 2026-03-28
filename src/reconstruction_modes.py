@@ -44,6 +44,16 @@ RECONSTRUCTION_MODES = [
         "uses_seed": True,
     },
     {
+        "value": "block_seeded",
+        "label": "Block seeded",
+        "description": (
+            "Block seeded places replacements in small shuffled spatial blocks "
+            "within each source-color group. This often preserves local image "
+            "structure better than broader random placement while staying repeatable."
+        ),
+        "uses_seed": True,
+    },
+    {
         "value": "random_unseeded",
         "label": "Random unseeded",
         "description": (

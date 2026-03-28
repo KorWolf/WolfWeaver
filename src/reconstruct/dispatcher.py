@@ -7,7 +7,10 @@ from .random_modes import (
     reconstruct_image_weighted_random,
 )
 from .scanline import reconstruct_image_scanline
-from .structured_modes import reconstruct_image_checker_seeded
+from .structured_modes import (
+    reconstruct_image_block_seeded,
+    reconstruct_image_checker_seeded,
+)
 
 
 def reconstruct_image_from_assignments(
@@ -18,10 +21,6 @@ def reconstruct_image_from_assignments(
 ) -> np.ndarray:
     """
     Dispatch reconstruction based on the selected mode.
-
-    This function is the single entry point used by the pipeline.
-    It reads the selected reconstruction_mode and routes the work
-    to the correct reconstruction function.
     """
     if reconstruction_mode == "scanline":
         return reconstruct_image_scanline(
@@ -41,6 +40,14 @@ def reconstruct_image_from_assignments(
             image_array=image_array,
             assignment_df=assignment_df,
             random_seed=random_seed,
+        )
+
+    if reconstruction_mode == "block_seeded":
+        return reconstruct_image_block_seeded(
+            image_array=image_array,
+            assignment_df=assignment_df,
+            random_seed=random_seed,
+            block_size=4,
         )
 
     if reconstruction_mode == "random_unseeded":
