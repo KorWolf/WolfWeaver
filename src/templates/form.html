@@ -115,6 +115,7 @@
                         <option value="clustered_main_diverse" {% if values.image_palette_method == "clustered_main_diverse" %}selected{% endif %}>Main colors (diverse)</option>
                         <option value="clustered_main_low_variety" {% if values.image_palette_method == "clustered_main_low_variety" %}selected{% endif %}>Main colors (low variety)</option>
                         <option value="top_frequency" {% if values.image_palette_method == "top_frequency" %}selected{% endif %}>Top frequency</option>
+                        <option value="top_frequency_low_variety" {% if values.image_palette_method == "top_frequency_low_variety" %}selected{% endif %}>Top frequency (low variety)</option>
                     </select>
 
                     <p class="help-text">
@@ -124,6 +125,7 @@
                         Main colors (diverse) pushes harder for hue-family variety across the selected palette.
                         Main colors (low variety) is meant for simpler images and prioritizes dominant exact colors and clarity.
                         Top frequency uses the most common exact colors overall.
+                        Top frequency (low variety) starts from exact source-color frequency and filters near-duplicates for simpler images.
                     </p>
 
                     <label for="image_palette_count">Image-derived palette color count</label>

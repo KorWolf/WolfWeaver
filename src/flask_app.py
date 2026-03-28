@@ -13,6 +13,7 @@ from src.palette import load_palette_from_json
 from src.palette_presets import PALETTE_PRESETS
 from src.palette_source import (
     extract_clustered_main_palette_colors,
+    extract_top_frequency_low_variety_palette_colors,
     extract_top_image_palette_colors,
 )
 from src.pipeline import run_pipeline_stream
@@ -320,6 +321,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         "clustered_main_diverse",
         "clustered_main_low_variety",
         "top_frequency",
+        "top_frequency_low_variety",
     }:
         raise ValueError("Invalid image-derived palette method.")
 
@@ -416,6 +418,14 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
                 random_seed=random_seed,
                 representative_mode="most_frequent_real",
                 selection_mode="low_variety",
+            )
+        elif image_palette_method == "top_frequency_low_variety":
+            palette_colors = extract_top_frequency_low_variety_palette_colors(
+                image_path=source_image_path,
+                color_count=image_palette_count,
+                preserve_darkest=True,
+                preserve_lightest=True,
+                min_color_distance=26.0,
             )
         else:
             palette_colors = extract_top_image_palette_colors(

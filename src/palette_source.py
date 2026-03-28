@@ -75,7 +75,7 @@ def calculate_warmth(rgb: np.ndarray) -> float:
     Estimate how warm a color feels.
 
     Higher values mean the color leans more toward warm red/yellow
-    families, which helps the diverse selection modes avoid over-filling
+    families, which helps some selection modes avoid over-filling
     with too many warm variants.
     """
     rgb = np.asarray(rgb, dtype=np.float64)
@@ -771,6 +771,138 @@ def select_clustered_palette_colors_low_variety(
     return [record["hex"] for record in selected_records[:color_count]]
 
 
+def select_top_frequency_low_variety_colors(
+    color_stats_df,
+    color_count: int,
+    preserve_darkest: bool = True,
+    preserve_lightest: bool = True,
+    min_color_distance: float = 26.0,
+) -> list[str]:
+    """
+    Select a low-variety palette directly from exact source colors ranked by frequency.
+
+    This mode is intended for simpler images where exact source colors matter
+    more than cluster-based family representation.
+
+    Strategy:
+    - start from exact colors already present in the image
+    - optionally keep darkest/lightest anchors
+    - walk through colors in descending frequency
+    - skip near-duplicates
+    - lightly preserve lightness spread without forcing extra hue diversity
+    """
+    if color_count < 1:
+        raise ValueError("color_count must be at least 1.")
+
+    if len(color_stats_df) == 0:
+        raise ValueError("No source colors were available for palette selection.")
+
+    records = []
+    total_frequency = int(color_stats_df["Frequency"].sum())
+
+    for _, row in color_stats_df.iterrows():
+        rgb = np.asarray(
+            [int(row["R"]), int(row["G"]), int(row["B"])],
+            dtype=np.float64,
+        )
+
+        records.append(
+            {
+                "rgb": rgb,
+                "hex": str(row["Hex"]),
+                "frequency": int(row["Frequency"]),
+                "frequency_ratio": int(row["Frequency"]) / total_frequency,
+                "lightness": calculate_rgb_lightness(rgb),
+                "saturation": calculate_rgb_saturation(rgb),
+            }
+        )
+
+    selected_records: list[dict] = []
+    selected_rgbs: list[np.ndarray] = []
+    selected_hexes: set[str] = set()
+
+    def add_record(record: dict) -> None:
+        selected_records.append(record)
+        selected_rgbs.append(record["rgb"])
+        selected_hexes.add(record["hex"])
+
+    def try_add_anchor(record: dict, distance_threshold: float) -> bool:
+        if record["hex"] in selected_hexes:
+            return False
+
+        if can_add_color(record["rgb"], selected_rgbs, distance_threshold):
+            add_record(record)
+            return True
+
+        return False
+
+    if preserve_darkest:
+        darkest_record = min(records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(darkest_record, 0.0)
+
+    if preserve_lightest and len(selected_records) < color_count:
+        lightest_record = max(records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(lightest_record, min_color_distance)
+
+    while len(selected_records) < color_count:
+        best_candidate = None
+        best_candidate_score = None
+
+        for record in records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            if not can_add_color(record["rgb"], selected_rgbs, min_color_distance):
+                continue
+
+            candidate_score = record["frequency_ratio"] * 1.0
+
+            # Lightly reward lightness spread so simpler images can still
+            # keep some structural shading without forcing unrelated colors.
+            if len(selected_records) > 0:
+                nearest_selected_lightness_gap = min(
+                    abs(record["lightness"] - selected["lightness"])
+                    for selected in selected_records
+                )
+                candidate_score += min(nearest_selected_lightness_gap / 255.0, 0.06)
+
+            # Penalize tiny exact colors so stray rare pixels do not dominate.
+            if record["frequency_ratio"] < 0.003:
+                candidate_score -= 0.10
+            elif record["frequency_ratio"] < 0.008:
+                candidate_score -= 0.04
+
+            if best_candidate is None or candidate_score > best_candidate_score:
+                best_candidate = record
+                best_candidate_score = candidate_score
+
+        if best_candidate is not None:
+            add_record(best_candidate)
+            continue
+
+        # Slight fallback relaxation only if strict filtering leaves us short.
+        relaxed_threshold = max(min_color_distance * 0.7, 12.0)
+
+        for record in records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            if can_add_color(record["rgb"], selected_rgbs, relaxed_threshold):
+                add_record(record)
+                break
+        else:
+            for record in records:
+                if record["hex"] in selected_hexes:
+                    continue
+
+                add_record(record)
+                break
+            else:
+                break
+
+    return [record["hex"] for record in selected_records[:color_count]]
+
+
 # ============================================================
 # Public extraction methods
 # ============================================================
@@ -798,6 +930,39 @@ def extract_top_image_palette_colors(
         color_count = len(color_stats_df)
 
     return color_stats_df.head(color_count)["Hex"].tolist()
+
+
+def extract_top_frequency_low_variety_palette_colors(
+    image_path: Path,
+    color_count: int,
+    preserve_darkest: bool = True,
+    preserve_lightest: bool = True,
+    min_color_distance: float = 26.0,
+) -> list[str]:
+    """
+    Extract a palette for simpler images by starting from exact source-color
+    frequency instead of cluster grouping.
+    """
+    if color_count < 1:
+        raise ValueError("Image-derived palette color count must be at least 1.")
+
+    if not image_path.exists():
+        raise FileNotFoundError(f"Source image not found: {image_path}")
+
+    image_array = load_image(image_path)
+    color_frequencies = extract_color_frequencies(image_array)
+    color_stats_df = build_color_stats_dataframe(color_frequencies)
+
+    if color_count > len(color_stats_df):
+        color_count = len(color_stats_df)
+
+    return select_top_frequency_low_variety_colors(
+        color_stats_df=color_stats_df,
+        color_count=color_count,
+        preserve_darkest=preserve_darkest,
+        preserve_lightest=preserve_lightest,
+        min_color_distance=min_color_distance,
+    )
 
 
 def extract_clustered_main_palette_colors(
@@ -840,7 +1005,7 @@ def extract_clustered_main_palette_colors(
     )
 
     internal_cluster_count = max(color_count * 3, 16)
-    internal_cluster_count = min(internal_cluster_count, 48, len(sampled_pixels))
+    internal_cluster_count = min(internal_cluster_count, 500, len(sampled_pixels))
 
     centroids, labels = cluster_pixels_kmeans(
         pixels=sampled_pixels,
