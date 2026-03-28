@@ -67,12 +67,82 @@
                     <dd id="summary-mode"></dd>
                 </div>
                 <div>
+                    <dt>Score mode</dt>
+                    <dd id="summary-score-mode"></dd>
+                </div>
+                <div>
                     <dt>Frames generated</dt>
                     <dd id="summary-frame-count"></dd>
                 </div>
                 <div>
                     <dt>Total runtime</dt>
                     <dd id="summary-runtime"></dd>
+                </div>
+                <div>
+                    <dt>Config snapshot</dt>
+                    <dd id="summary-config-snapshot"></dd>
+                </div>
+            </dl>
+        </section>
+
+        <section id="settings-section" class="results-card hidden">
+            <h2>Settings used</h2>
+            <dl class="summary-list">
+                <div>
+                    <dt>Source image</dt>
+                    <dd id="settings-source-image"></dd>
+                </div>
+                <div>
+                    <dt>Palette source</dt>
+                    <dd id="settings-palette-source"></dd>
+                </div>
+                <div>
+                    <dt>Image palette method</dt>
+                    <dd id="settings-image-palette-method"></dd>
+                </div>
+                <div>
+                    <dt>Image palette count</dt>
+                    <dd id="settings-image-palette-count"></dd>
+                </div>
+                <div>
+                    <dt>Selected preset</dt>
+                    <dd id="settings-selected-preset"></dd>
+                </div>
+                <div>
+                    <dt>Frame count</dt>
+                    <dd id="settings-frame-count"></dd>
+                </div>
+                <div>
+                    <dt>Reconstruction mode</dt>
+                    <dd id="settings-reconstruction-mode"></dd>
+                </div>
+                <div>
+                    <dt>Score mode</dt>
+                    <dd id="settings-score-mode"></dd>
+                </div>
+                <div>
+                    <dt>Random seed</dt>
+                    <dd id="settings-random-seed"></dd>
+                </div>
+                <div>
+                    <dt>Create GIF</dt>
+                    <dd id="settings-create-gif"></dd>
+                </div>
+                <div>
+                    <dt>GIF frame duration (ms)</dt>
+                    <dd id="settings-gif-frame-duration"></dd>
+                </div>
+                <div>
+                    <dt>Frame prefix</dt>
+                    <dd id="settings-frame-prefix"></dd>
+                </div>
+                <div>
+                    <dt>GIF output name</dt>
+                    <dd id="settings-gif-output-name"></dd>
+                </div>
+                <div>
+                    <dt>Actual palette colors used</dt>
+                    <dd id="settings-palette-colors"></dd>
                 </div>
             </dl>
         </section>
@@ -92,10 +162,6 @@
         // ============================================================
         // Static values and DOM references
         // ============================================================
-        // jobId comes from Flask when the page is rendered.
-        // The rest are the page elements that will be updated while
-        // the run is in progress.
-        // ============================================================
 
         const jobId = "{{ job_id }}";
 
@@ -112,15 +178,11 @@
         const frameGrid = document.getElementById("frame-grid");
 
         const summarySection = document.getElementById("summary-section");
+        const settingsSection = document.getElementById("settings-section");
         const gifSection = document.getElementById("gif-section");
 
         // ============================================================
         // Client-side timer state
-        // ============================================================
-        // This timer starts immediately when the page loads so the user
-        // sees motion even before the first poll comes back.
-        // Once the run completes, we lock it to the final runtime value
-        // reported by the backend.
         // ============================================================
 
         let runStartedAtMs = Date.now();
@@ -135,6 +197,14 @@
             const minutes = Math.floor(secondsTotal / 60);
             const seconds = secondsTotal % 60;
             return `${minutes}m ${seconds.toFixed(1)}s`;
+        }
+
+        function formatBool(value) {
+            return value ? "Yes" : "No";
+        }
+
+        function formatNullable(value, fallback = "—") {
+            return value === null || value === undefined || value === "" ? fallback : String(value);
         }
 
         // ============================================================
@@ -170,10 +240,6 @@
         // ============================================================
         // Timing detail helpers
         // ============================================================
-        // These update the two new status lines:
-        // - first frame time
-        // - estimated remaining time
-        // ============================================================
 
         function updateTimingDetails(data) {
             if (data.first_frame_text) {
@@ -193,11 +259,6 @@
 
         // ============================================================
         // Frame rendering
-        // ============================================================
-        // Each completed frame gets shown as a card with:
-        // - preview image
-        // - frame number
-        // - download link
         // ============================================================
 
         function renderFrames(frameUrls) {
@@ -233,13 +294,10 @@
         }
 
         // ============================================================
-        // Final-results rendering
-        // ============================================================
-        // Once the run completes, fill in the summary section and show
-        // the GIF if one was generated.
+        // Completed run rendering
         // ============================================================
 
-        function renderCompletedResults(data) {
+        function renderSummary(data) {
             document.getElementById("summary-run-dir").textContent = data.run_dir;
             document.getElementById("summary-image-size").textContent = `${data.image_width} × ${data.image_height}`;
             document.getElementById("summary-total-pixels").textContent = data.total_pixels;
@@ -247,10 +305,58 @@
             document.getElementById("summary-palette-name").textContent = data.palette_name;
             document.getElementById("summary-palette-size").textContent = data.palette_size;
             document.getElementById("summary-mode").textContent = data.reconstruction_mode;
+            document.getElementById("summary-score-mode").textContent = formatNullable(data.score_mode);
             document.getElementById("summary-frame-count").textContent = data.frame_count;
             document.getElementById("summary-runtime").textContent = data.runtime_text;
 
+            const configSnapshotCell = document.getElementById("summary-config-snapshot");
+            configSnapshotCell.innerHTML = "";
+
+            if (data.config_snapshot_url) {
+                const link = document.createElement("a");
+                link.href = data.config_snapshot_url;
+                link.textContent = "View saved config snapshot";
+                link.target = "_blank";
+                configSnapshotCell.appendChild(link);
+            } else {
+                configSnapshotCell.textContent = "—";
+            }
+
             summarySection.classList.remove("hidden");
+        }
+
+        function renderSettingsUsed(settings) {
+            if (!settings) {
+                return;
+            }
+
+            document.getElementById("settings-source-image").textContent = formatNullable(settings.source_image);
+            document.getElementById("settings-palette-source").textContent = formatNullable(settings.palette_source);
+            document.getElementById("settings-image-palette-method").textContent = formatNullable(settings.image_palette_method);
+            document.getElementById("settings-image-palette-count").textContent = formatNullable(settings.image_palette_count);
+            document.getElementById("settings-selected-preset").textContent = formatNullable(settings.selected_preset);
+            document.getElementById("settings-frame-count").textContent = formatNullable(settings.frame_count);
+            document.getElementById("settings-reconstruction-mode").textContent = formatNullable(settings.reconstruction_mode);
+            document.getElementById("settings-score-mode").textContent = formatNullable(settings.score_mode);
+            document.getElementById("settings-random-seed").textContent = formatNullable(settings.random_seed);
+            document.getElementById("settings-create-gif").textContent = formatBool(Boolean(settings.create_gif));
+            document.getElementById("settings-gif-frame-duration").textContent = formatNullable(settings.gif_frame_duration_ms);
+            document.getElementById("settings-frame-prefix").textContent = formatNullable(settings.frame_prefix);
+            document.getElementById("settings-gif-output-name").textContent = formatNullable(settings.gif_output_name);
+
+            const paletteColorsCell = document.getElementById("settings-palette-colors");
+            if (Array.isArray(settings.palette_colors) && settings.palette_colors.length > 0) {
+                paletteColorsCell.textContent = settings.palette_colors.join(", ");
+            } else {
+                paletteColorsCell.textContent = "—";
+            }
+
+            settingsSection.classList.remove("hidden");
+        }
+
+        function renderCompletedResults(data) {
+            renderSummary(data);
+            renderSettingsUsed(data.settings_used);
 
             if (data.gif_url) {
                 const gifImage = document.getElementById("gif-image");
@@ -259,16 +365,13 @@
                 gifImage.src = data.gif_url;
                 gifDownload.href = data.gif_url;
                 gifSection.classList.remove("hidden");
+            } else {
+                gifSection.classList.add("hidden");
             }
         }
 
         // ============================================================
         // Polling
-        // ============================================================
-        // This is the core of the live page:
-        // - request the latest job JSON from Flask
-        // - update the page
-        // - repeat every second until the run completes or fails
         // ============================================================
 
         async function pollStatus() {

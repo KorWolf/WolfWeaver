@@ -1,5 +1,6 @@
 from datetime import datetime
 from pathlib import Path
+import json
 import re
 import threading
 import uuid
@@ -19,6 +20,10 @@ from src.reconstruction_modes import RECONSTRUCTION_MODES, get_reconstruction_mo
 from src.score_modes import get_score_mode_values
 
 
+# ============================================================
+# Validation patterns and filesystem locations
+# ============================================================
+
 HEX_COLOR_PATTERN = re.compile(r"^#?[0-9A-Fa-f]{6}$")
 SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
 RUNS_ROOT = Path("output/runs").resolve()
@@ -31,9 +36,14 @@ app = Flask(
     static_folder="static",
 )
 
+# In-memory job state for active runs.
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
 
+
+# ============================================================
+# Default form helpers
+# ============================================================
 
 def load_default_palette_text() -> str:
     """
@@ -134,6 +144,10 @@ def build_score_mode_options() -> list[dict]:
     ]
 
 
+# ============================================================
+# Input parsing and validation
+# ============================================================
+
 def parse_palette_text(palette_text: str) -> list[str]:
     """
     Parse the palette textarea into a normalized list of hex colors.
@@ -218,6 +232,10 @@ def validate_image_upload(file_storage) -> Path | None:
     return saved_path
 
 
+# ============================================================
+# Display / formatting helpers
+# ============================================================
+
 def build_frame_count_message(frame_count: int, palette_size: int) -> str | None:
     """
     Build a user-facing advisory about frame count vs palette size.
@@ -254,6 +272,10 @@ def build_duration_text(total_seconds: float) -> str:
     seconds = total_seconds % 60
     return f"{minutes}m {seconds:.2f}s"
 
+
+# ============================================================
+# Request -> runtime config
+# ============================================================
 
 def build_config_from_request() -> tuple[dict, dict, str | None]:
     """
@@ -368,9 +390,13 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
 
     palette_size = len(palette_colors)
 
+    # Store all run settings needed for reproducibility.
     config = {
         "source_image": str(source_image),
         "palette_file": str(defaults["palette_file"]),
+        "palette_source": palette_source,
+        "image_palette_method": image_palette_method if palette_source == "image" else None,
+        "image_palette_count": image_palette_count if palette_source == "image" else None,
         "palette_colors": palette_colors,
         "palette_name": palette_name,
         "frame_count": frame_count,
@@ -382,11 +408,16 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         "reconstruction_mode": reconstruction_mode,
         "score_mode": score_mode,
         "random_seed": random_seed,
+        "selected_preset": form_values["selected_preset"] or None,
     }
 
     advisory = build_frame_count_message(frame_count, palette_size)
     return config, form_values, advisory
 
+
+# ============================================================
+# Run output helpers
+# ============================================================
 
 def run_file_url(path: Path) -> str:
     """
@@ -394,6 +425,21 @@ def run_file_url(path: Path) -> str:
     """
     relative_path = path.resolve().relative_to(RUNS_ROOT)
     return url_for("serve_run_file", subpath=relative_path.as_posix())
+
+
+def load_run_settings_from_snapshot(config_snapshot_path: str | Path | None) -> dict | None:
+    """
+    Load the saved config snapshot for a run, if available.
+    """
+    if not config_snapshot_path:
+        return None
+
+    snapshot_path = Path(config_snapshot_path)
+    if not snapshot_path.exists():
+        return None
+
+    with snapshot_path.open("r", encoding="utf-8") as file:
+        return json.load(file)
 
 
 def serialize_update(update: dict) -> dict:
@@ -409,6 +455,13 @@ def serialize_update(update: dict) -> dict:
     gif_path = update.get("gif_path")
     if gif_path is not None:
         gif_url = run_file_url(gif_path)
+
+    config_snapshot_url = None
+    config_snapshot_path = update.get("config_snapshot_path")
+    if config_snapshot_path:
+        config_snapshot_url = run_file_url(Path(config_snapshot_path))
+
+    settings_used = load_run_settings_from_snapshot(config_snapshot_path)
 
     total_runtime_seconds = float(update.get("total_runtime_seconds", 0.0))
     frame_count = int(update.get("frame_count", 0))
@@ -443,6 +496,8 @@ def serialize_update(update: dict) -> dict:
         "status": update.get("status"),
         "run_dir": str(update.get("run_dir", "")),
         "config_snapshot_path": str(update.get("config_snapshot_path", "")),
+        "config_snapshot_url": config_snapshot_url,
+        "settings_used": settings_used,
         "source_stats_csv": str(update.get("source_stats_csv", "")),
         "image_width": update.get("image_width"),
         "image_height": update.get("image_height"),
@@ -472,6 +527,10 @@ def serialize_update(update: dict) -> dict:
     }
 
 
+# ============================================================
+# Background worker
+# ============================================================
+
 def worker(job_id: str, config: dict) -> None:
     """
     Run the pipeline in a background thread and keep job state updated.
@@ -486,6 +545,10 @@ def worker(job_id: str, config: dict) -> None:
             jobs[job_id]["status"] = "failed"
             jobs[job_id]["error"] = str(error)
 
+
+# ============================================================
+# Routes
+# ============================================================
 
 @app.route("/", methods=["GET"])
 def form_page():
@@ -631,6 +694,9 @@ def run_status(job_id: str):
             "runtime_text": "0m 0.00s",
             "frame_urls": [],
             "gif_url": None,
+            "config_snapshot_path": None,
+            "config_snapshot_url": None,
+            "settings_used": None,
             "first_frame_seconds": None,
             "first_frame_text": None,
             "average_frame_seconds": None,
