@@ -60,12 +60,12 @@
                 <label for="palette_source">Palette source</label>
                 <select id="palette_source" name="palette_source">
                     <option value="manual" {% if values.palette_source == "manual" %}selected{% endif %}>Manual / Preset</option>
-                    <option value="image_top_frequency" {% if values.palette_source == "image_top_frequency" %}selected{% endif %}>Image-derived (most frequent colors)</option>
+                    <option value="image" {% if values.palette_source == "image" %}selected{% endif %}>Image-derived</option>
                 </select>
 
                 <p class="help-text">
                     Manual / Preset lets you choose a preset or type your own palette.
-                    Image-derived builds a palette automatically from the most frequent colors in the source image.
+                    Image-derived builds a palette automatically from the source image.
                 </p>
 
                 <div id="manual-palette-controls">
@@ -107,6 +107,16 @@
                 </div>
 
                 <div id="image-palette-controls">
+                    <label for="image_palette_method">Image-derived palette method</label>
+                    <select id="image_palette_method" name="image_palette_method">
+                        <option value="clustered_main" {% if values.image_palette_method == "clustered_main" %}selected{% endif %}>Main colors</option>
+                        <option value="top_frequency" {% if values.image_palette_method == "top_frequency" %}selected{% endif %}>Top frequency</option>
+                    </select>
+
+                    <p class="help-text">
+                        Main colors tries to find representative major color groups. Top frequency uses the most common exact colors.
+                    </p>
+
                     <label for="image_palette_count">Image-derived palette color count</label>
                     <input
                         id="image_palette_count"
@@ -118,7 +128,6 @@
                         required
                     >
                     <p class="help-text">
-                        Uses the most frequent colors found in the source image.
                         If the image contains fewer unique colors than requested, all unique colors will be used.
                     </p>
                 </div>
@@ -246,11 +255,8 @@
     </main>
 
     <script>
-        // ============================================================
-        // DOM references
-        // ============================================================
-
         const paletteSourceField = document.getElementById("palette_source");
+        const imagePaletteMethodField = document.getElementById("image_palette_method");
         const modeField = document.getElementById("reconstruction_mode");
         const seedField = document.getElementById("random_seed");
         const frameCountField = document.getElementById("frame_count");
@@ -269,10 +275,6 @@
         const palettePresets = {{ palette_presets|tojson|safe }};
         const reconstructionModes = {{ reconstruction_modes|tojson|safe }};
 
-        // ============================================================
-        // Reconstruction mode helpers
-        // ============================================================
-
         function getSelectedModeConfig() {
             return reconstructionModes.find(mode => mode.value === modeField.value) || null;
         }
@@ -288,10 +290,6 @@
             modeDescription.textContent = selectedMode ? selectedMode.description : "";
         }
 
-        // ============================================================
-        // Palette source helpers
-        // ============================================================
-
         function syncPaletteSourceState() {
             const useManualPalette = paletteSourceField.value === "manual";
 
@@ -300,12 +298,9 @@
 
             paletteField.disabled = !useManualPalette;
             presetField.disabled = !useManualPalette;
+            imagePaletteMethodField.disabled = useManualPalette;
             imagePaletteCountField.disabled = useManualPalette;
         }
-
-        // ============================================================
-        // Palette helpers
-        // ============================================================
 
         function getPaletteLines() {
             return paletteField.value
@@ -390,10 +385,6 @@
             }
         }
 
-        // ============================================================
-        // Event listeners
-        // ============================================================
-
         modeField.addEventListener("change", () => {
             syncSeedState();
             updateModeDescription();
@@ -413,10 +404,6 @@
         });
 
         presetField.addEventListener("change", applyPresetToTextarea);
-
-        // ============================================================
-        // Initial page setup
-        // ============================================================
 
         syncSeedState();
         updateModeDescription();

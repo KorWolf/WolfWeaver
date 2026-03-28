@@ -10,16 +10,13 @@ from werkzeug.utils import secure_filename
 from src.config_loader import load_config
 from src.palette import load_palette_from_json
 from src.palette_presets import PALETTE_PRESETS
-from src.palette_source import extract_top_image_palette_colors
+from src.palette_source import (
+    extract_clustered_main_palette_colors,
+    extract_top_image_palette_colors,
+)
 from src.pipeline import run_pipeline_stream
 from src.reconstruction_modes import RECONSTRUCTION_MODES, get_reconstruction_mode_values
 
-
-# ============================================================
-# Validation patterns and filesystem locations
-# ============================================================
-# These constants are used by form validation and file handling.
-# ============================================================
 
 HEX_COLOR_PATTERN = re.compile(r"^#?[0-9A-Fa-f]{6}$")
 SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -27,55 +24,30 @@ RUNS_ROOT = Path("output/runs").resolve()
 UPLOAD_ROOT = Path("input/uploads")
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
-
-# ============================================================
-# Flask app setup
-# ============================================================
-
 app = Flask(
     __name__,
     template_folder="templates",
     static_folder="static",
 )
 
-
-# ============================================================
-# In-memory job tracking
-# ============================================================
-# Each submitted run gets a job id.
-# A background thread updates progress while the pipeline runs.
-# ============================================================
-
 jobs: dict[str, dict] = {}
 jobs_lock = threading.Lock()
 
 
-# ============================================================
-# Default form-data helpers
-# ============================================================
-# These helpers keep the web form aligned with config.json.
-# ============================================================
-
 def load_default_palette_text() -> str:
-    """
-    Load the default palette file from config.json and convert it into
-    textarea-friendly text, one hex color per line.
-    """
     defaults = load_config(Path("config.json"))
     palette_data = load_palette_from_json(Path(defaults["palette_file"]))
     return "\n".join(str(color).upper() for color in palette_data["colors"])
 
 
 def build_default_form_values() -> dict:
-    """
-    Build the default values shown in the web form on first load.
-    """
     defaults = load_config(Path("config.json"))
     default_palette_text = load_default_palette_text()
     default_palette_size = len(parse_palette_text(default_palette_text))
 
     return {
         "palette_source": "manual",
+        "image_palette_method": "clustered_main",
         "image_palette_count": default_palette_size,
         "frame_count": int(defaults["frame_count"]),
         "reconstruction_mode": str(defaults["reconstruction_mode"]),
@@ -93,14 +65,8 @@ def build_palette_preset_display_options() -> list[dict]:
     """
     Build display metadata for palette presets.
 
-    Rule:
-    - If the preset key already ends with the exact color count, do not
-      append the count again.
-    - Otherwise, append the color count to the display label.
-
-    Examples:
-    - grayscale_4 -> Grayscale 4
-    - black_white -> Black White 2
+    If the preset key already ends with its color count, do not append the count again.
+    Otherwise append the count to the label.
     """
     display_options: list[dict] = []
 
@@ -126,20 +92,7 @@ def build_palette_preset_display_options() -> list[dict]:
     return display_options
 
 
-# ============================================================
-# Input parsing and validation helpers
-# ============================================================
-
 def parse_palette_text(palette_text: str) -> list[str]:
-    """
-    Parse the palette textarea into a normalized list of hex colors.
-
-    Rules:
-    - one color per line
-    - blank lines are ignored
-    - colors are normalized to uppercase
-    - colors always get a leading '#'
-    """
     lines = [line.strip() for line in palette_text.splitlines()]
     lines = [line for line in lines if line]
 
@@ -165,9 +118,6 @@ def parse_palette_text(palette_text: str) -> list[str]:
 
 
 def validate_positive_int(value: str, field_name: str, minimum: int = 1) -> int:
-    """
-    Validate that a submitted form value is an integer >= minimum.
-    """
     try:
         int_value = int(value)
     except Exception as error:
@@ -180,11 +130,6 @@ def validate_positive_int(value: str, field_name: str, minimum: int = 1) -> int:
 
 
 def validate_safe_name(value: str, field_name: str) -> str:
-    """
-    Validate names used for output files.
-
-    This prevents unsafe characters from being used in filenames.
-    """
     normalized = value.strip()
 
     if not normalized:
@@ -200,13 +145,6 @@ def validate_safe_name(value: str, field_name: str) -> str:
 
 
 def validate_image_upload(file_storage) -> Path | None:
-    """
-    Validate and save an uploaded image file.
-
-    Returns:
-    - saved file path if an upload was provided
-    - None if no file was uploaded
-    """
     if file_storage is None or not file_storage.filename:
         return None
 
@@ -226,16 +164,7 @@ def validate_image_upload(file_storage) -> Path | None:
     return saved_path
 
 
-# ============================================================
-# UI advisory / formatting helpers
-# ============================================================
-
 def build_frame_count_message(frame_count: int, palette_size: int) -> str | None:
-    """
-    Return a user-facing advisory about frame_count vs palette size.
-
-    This does not block the run. It is only an informational message.
-    """
     if frame_count == palette_size:
         return None
 
@@ -252,42 +181,23 @@ def build_frame_count_message(frame_count: int, palette_size: int) -> str | None
 
 
 def build_runtime_text(total_runtime_seconds: float) -> str:
-    """
-    Convert runtime in seconds into a simple 'Xm Ys' string.
-    """
     minutes = int(total_runtime_seconds // 60)
     seconds = total_runtime_seconds % 60
     return f"{minutes}m {seconds:.2f}s"
 
 
 def build_duration_text(total_seconds: float) -> str:
-    """
-    Convert seconds into a simple 'Xm Ys' string.
-    """
     minutes = int(total_seconds // 60)
     seconds = total_seconds % 60
     return f"{minutes}m {seconds:.2f}s"
 
 
-# ============================================================
-# Request -> pipeline config conversion
-# ============================================================
-# This is one of the most important functions in the file.
-# It takes raw browser form data and converts it into the exact
-# runtime config shape expected by run_pipeline_stream().
-# ============================================================
-
 def build_config_from_request() -> tuple[dict, dict, str | None]:
-    """
-    Read the form submission, validate inputs, and build:
-    - config: the runtime config dict used by the pipeline
-    - form_values: values for re-rendering the form if needed
-    - advisory: optional frame-count advisory message
-    """
     defaults = load_config(Path("config.json"))
 
     form_values = {
         "palette_source": request.form.get("palette_source", "manual"),
+        "image_palette_method": request.form.get("image_palette_method", "clustered_main"),
         "image_palette_count": request.form.get("image_palette_count", "8"),
         "frame_count": request.form.get("frame_count", str(defaults["frame_count"])),
         "reconstruction_mode": request.form.get(
@@ -310,8 +220,12 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     }
 
     palette_source = form_values["palette_source"]
-    if palette_source not in {"manual", "image_top_frequency"}:
+    if palette_source not in {"manual", "image"}:
         raise ValueError("Invalid palette source.")
+
+    image_palette_method = form_values["image_palette_method"]
+    if image_palette_method not in {"clustered_main", "top_frequency"}:
+        raise ValueError("Invalid image-derived palette method.")
 
     frame_count = validate_positive_int(form_values["frame_count"], "Frame count", minimum=1)
     random_seed = validate_positive_int(form_values["random_seed"], "Random seed", minimum=0)
@@ -346,14 +260,24 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         palette_colors = parse_palette_text(form_values["palette_text"])
         palette_name = form_values["selected_preset"] or "web_palette"
     else:
-        palette_colors = extract_top_image_palette_colors(
-            image_path=Path(source_image),
-            color_count=image_palette_count,
-        )
-        palette_name = f"image_top_frequency_{len(palette_colors)}"
+        source_image_path = Path(source_image)
 
-        # Keep the textarea in sync so the user can still see what was chosen
-        # when the form rerenders after validation errors.
+        if image_palette_method == "clustered_main":
+            palette_colors = extract_clustered_main_palette_colors(
+                image_path=source_image_path,
+                color_count=image_palette_count,
+                preserve_darkest=True,
+                preserve_lightest=True,
+                min_color_distance=28.0,
+                random_seed=random_seed,
+            )
+        else:
+            palette_colors = extract_top_image_palette_colors(
+                image_path=source_image_path,
+                color_count=image_palette_count,
+            )
+
+        palette_name = f"image_{image_palette_method}_{len(palette_colors)}"
         form_values["palette_text"] = "\n".join(palette_colors)
 
     palette_size = len(palette_colors)
@@ -377,22 +301,12 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     return config, form_values, advisory
 
 
-# ============================================================
-# Run-output URL helpers
-# ============================================================
-
 def run_file_url(path: Path) -> str:
-    """
-    Convert an absolute run file path into a browser-accessible URL.
-    """
     relative_path = path.resolve().relative_to(RUNS_ROOT)
     return url_for("serve_run_file", subpath=relative_path.as_posix())
 
 
 def serialize_update(update: dict) -> dict:
-    """
-    Convert a pipeline progress update into a JSON-safe payload for the UI.
-    """
     frame_urls = [
         run_file_url(path)
         for path in update.get("frame_paths", [])
@@ -464,15 +378,7 @@ def serialize_update(update: dict) -> dict:
     }
 
 
-# ============================================================
-# Background worker
-# ============================================================
-
 def worker(job_id: str, config: dict) -> None:
-    """
-    Run the pipeline in the background and keep the in-memory job
-    record updated with the latest progress.
-    """
     try:
         for update in run_pipeline_stream(config):
             with jobs_lock:
@@ -484,15 +390,8 @@ def worker(job_id: str, config: dict) -> None:
             jobs[job_id]["error"] = str(error)
 
 
-# ============================================================
-# Routes: form page and run start
-# ============================================================
-
 @app.route("/", methods=["GET"])
 def form_page():
-    """
-    Show the main input form.
-    """
     form_values = build_default_form_values()
 
     try:
@@ -516,10 +415,6 @@ def form_page():
 
 @app.route("/start", methods=["POST"])
 def start_run():
-    """
-    Validate submitted form data, create a background job, and redirect
-    the user to the run-progress page.
-    """
     try:
         config, form_values, advisory = build_config_from_request()
         job_id = uuid.uuid4().hex
@@ -538,12 +433,11 @@ def start_run():
         return redirect(url_for("run_page", job_id=job_id))
 
     except Exception as error:
-        # If validation fails, rebuild the form with the attempted values
-        # so the user does not lose everything they entered.
         defaults = build_default_form_values()
         attempted_values = {
             **defaults,
             "palette_source": request.form.get("palette_source", defaults["palette_source"]),
+            "image_palette_method": request.form.get("image_palette_method", defaults["image_palette_method"]),
             "image_palette_count": request.form.get("image_palette_count", defaults["image_palette_count"]),
             "frame_count": request.form.get("frame_count", defaults["frame_count"]),
             "reconstruction_mode": request.form.get(
@@ -586,15 +480,8 @@ def start_run():
         ), 400
 
 
-# ============================================================
-# Routes: progress page and API polling endpoint
-# ============================================================
-
 @app.route("/run/<job_id>", methods=["GET"])
 def run_page(job_id: str):
-    """
-    Show the progress/results page for a specific run.
-    """
     with jobs_lock:
         job = jobs.get(job_id)
 
@@ -610,9 +497,6 @@ def run_page(job_id: str):
 
 @app.route("/api/run/<job_id>", methods=["GET"])
 def run_status(job_id: str):
-    """
-    Return JSON progress updates for the browser to poll.
-    """
     with jobs_lock:
         job = jobs.get(job_id)
 
@@ -648,26 +532,12 @@ def run_status(job_id: str):
     return jsonify(payload)
 
 
-# ============================================================
-# Route: serve files from output/runs
-# ============================================================
-
 @app.route("/runs/<path:subpath>", methods=["GET"])
 def serve_run_file(subpath: str):
-    """
-    Serve generated files from the run output directory.
-    """
     return send_from_directory(RUNS_ROOT, subpath)
 
 
-# ============================================================
-# App entry point
-# ============================================================
-
 def main() -> None:
-    """
-    Start the Flask development server.
-    """
     app.run(host="127.0.0.1", port=5000, debug=False, threaded=True)
 
 
