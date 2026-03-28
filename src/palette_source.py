@@ -1,5 +1,6 @@
 from collections import Counter
 from pathlib import Path
+import colorsys
 
 import numpy as np
 from sklearn.cluster import KMeans
@@ -17,14 +18,6 @@ def rgb_array_to_hex(rgb: np.ndarray) -> str:
     Convert a length-3 RGB array into a hex color string.
     """
     r, g, b = [int(np.clip(round(channel), 0, 255)) for channel in rgb]
-    return f"#{r:02X}{g:02X}{b:02X}"
-
-
-def rgb_tuple_to_hex(rgb: tuple[int, int, int]) -> str:
-    """
-    Convert an integer RGB tuple into a hex color string.
-    """
-    r, g, b = rgb
     return f"#{r:02X}{g:02X}{b:02X}"
 
 
@@ -53,6 +46,41 @@ def calculate_rgb_distance(color_a: np.ndarray, color_b: np.ndarray) -> float:
     color_a = np.asarray(color_a, dtype=np.float64)
     color_b = np.asarray(color_b, dtype=np.float64)
     return float(np.linalg.norm(color_a - color_b))
+
+
+def calculate_hue_bucket(rgb: np.ndarray, bucket_count: int = 8) -> int | None:
+    """
+    Convert an RGB color into a coarse hue bucket.
+
+    Returns None for low-saturation colors because they do not belong
+    strongly to a hue family.
+    """
+    rgb = np.asarray(rgb, dtype=np.float64)
+    r = float(rgb[0]) / 255.0
+    g = float(rgb[1]) / 255.0
+    b = float(rgb[2]) / 255.0
+
+    hue, saturation, _ = colorsys.rgb_to_hsv(r, g, b)
+
+    # Low-saturation colors are treated as neutral rather than forced
+    # into an arbitrary hue family.
+    if saturation < 0.12:
+        return None
+
+    return int(hue * bucket_count) % bucket_count
+
+
+def calculate_warmth(rgb: np.ndarray) -> float:
+    """
+    Estimate how warm a color feels.
+
+    Higher values mean the color leans more toward warm red/yellow
+    families, which helps the diverse selection mode avoid over-filling
+    with too many warm variants.
+    """
+    rgb = np.asarray(rgb, dtype=np.float64)
+    r, g, b = rgb
+    return float((r * 0.60) + (g * 0.30) - (b * 0.20))
 
 
 # ============================================================
@@ -194,6 +222,8 @@ def build_cluster_records(
         saturation = calculate_rgb_saturation(representative_rgb)
         lightness = calculate_rgb_lightness(representative_rgb)
         distance_from_global_mean = calculate_rgb_distance(representative_rgb, global_mean)
+        hue_bucket = calculate_hue_bucket(representative_rgb)
+        warmth = calculate_warmth(representative_rgb)
 
         records.append(
             {
@@ -204,6 +234,8 @@ def build_cluster_records(
                 "saturation": saturation,
                 "lightness": lightness,
                 "distance_from_global_mean": distance_from_global_mean,
+                "hue_bucket": hue_bucket,
+                "warmth": warmth,
             }
         )
 
@@ -368,6 +400,133 @@ def select_clustered_palette_colors(
     return [record["hex"] for record in selected_records[:color_count]]
 
 
+def select_clustered_palette_colors_diverse(
+    cluster_records: list[dict],
+    color_count: int,
+    preserve_darkest: bool = True,
+    preserve_lightest: bool = True,
+    min_color_distance: float = 28.0,
+) -> list[str]:
+    """
+    Select the final palette from scored cluster records, with stronger
+    diversity pressure than the standard selection mode.
+
+    Goals:
+    - still respect strong clusters
+    - still keep dark/light anchors
+    - avoid spending too many slots on one hue family
+    - avoid over-filling with very similar warm tones
+    """
+    if color_count < 1:
+        raise ValueError("color_count must be at least 1.")
+
+    if len(cluster_records) == 0:
+        raise ValueError("No cluster records were available for palette selection.")
+
+    selected_records: list[dict] = []
+    selected_rgbs: list[np.ndarray] = []
+    selected_hexes: set[str] = set()
+
+    def add_record(record: dict) -> None:
+        selected_records.append(record)
+        selected_rgbs.append(record["rgb"])
+        selected_hexes.add(record["hex"])
+
+    def try_add_anchor(record: dict, distance_threshold: float) -> bool:
+        if record["hex"] in selected_hexes:
+            return False
+
+        if can_add_color(record["rgb"], selected_rgbs, distance_threshold):
+            add_record(record)
+            return True
+
+        return False
+
+    # Preserve strongest structural anchors first.
+    if preserve_darkest:
+        darkest_record = min(cluster_records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(darkest_record, 0.0)
+
+    if preserve_lightest and len(selected_records) < color_count:
+        lightest_record = max(cluster_records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(lightest_record, min_color_distance)
+
+    # Diversity-aware greedy selection.
+    while len(selected_records) < color_count:
+        best_candidate = None
+        best_candidate_score = None
+
+        # Track currently used hue buckets and warm-family density.
+        used_hue_buckets = {
+            record["hue_bucket"]
+            for record in selected_records
+            if record["hue_bucket"] is not None
+        }
+
+        selected_warm_count = sum(1 for record in selected_records if record["warmth"] >= 80.0)
+        selected_total_count = len(selected_records)
+
+        for record in cluster_records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            # Keep basic distinctness.
+            if not can_add_color(record["rgb"], selected_rgbs, min_color_distance):
+                continue
+
+            candidate_score = float(record["priority_score"])
+
+            # Reward new hue-family coverage.
+            if record["hue_bucket"] is not None and record["hue_bucket"] not in used_hue_buckets:
+                candidate_score += 0.18
+
+            # Reward cooler or underrepresented families when warm colors
+            # are already dominating the selection.
+            if selected_total_count > 0:
+                warm_ratio = selected_warm_count / selected_total_count
+
+                if warm_ratio >= 0.50 and record["warmth"] < 80.0:
+                    candidate_score += 0.12
+
+                if warm_ratio >= 0.60 and record["warmth"] >= 80.0:
+                    candidate_score -= 0.10
+
+            # Slightly reward saturated colors if they are not extremely tiny.
+            if record["saturation"] >= 40.0 and record["size_ratio"] >= 0.01:
+                candidate_score += 0.04
+
+            if best_candidate is None or candidate_score > best_candidate_score:
+                best_candidate = record
+                best_candidate_score = candidate_score
+
+        if best_candidate is not None:
+            add_record(best_candidate)
+            continue
+
+        # Fallback pass: relax the distance rule if diversity pressure got too strict.
+        relaxed_threshold = max(min_color_distance * 0.5, 10.0)
+
+        for record in cluster_records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            if can_add_color(record["rgb"], selected_rgbs, relaxed_threshold):
+                add_record(record)
+                break
+        else:
+            # Final fallback: fill whatever remains by rank.
+            for record in cluster_records:
+                if record["hex"] in selected_hexes:
+                    continue
+
+                add_record(record)
+                break
+            else:
+                break
+
+    return [record["hex"] for record in selected_records[:color_count]]
+
+
 # ============================================================
 # Public extraction methods
 # ============================================================
@@ -405,6 +564,7 @@ def extract_clustered_main_palette_colors(
     min_color_distance: float = 28.0,
     random_seed: int = 42,
     representative_mode: str = "nearest_real",
+    selection_mode: str = "standard",
 ) -> list[str]:
     """
     Extract a palette of representative "main colors" from the image.
@@ -412,12 +572,19 @@ def extract_clustered_main_palette_colors(
     representative_mode:
     - nearest_real: choose the actual pixel nearest to each cluster centroid
     - most_frequent_real: choose the most common exact color inside each cluster
+
+    selection_mode:
+    - standard: prioritize strongest clusters with distance filtering
+    - diverse: prioritize stronger hue-family spread during final selection
     """
     if color_count < 1:
         raise ValueError("Image-derived palette color count must be at least 1.")
 
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
+
+    if selection_mode not in {"standard", "diverse"}:
+        raise ValueError(f"Unsupported selection_mode: {selection_mode}")
 
     image_array = load_image(image_path)
     sampled_pixels = sample_image_pixels(
@@ -443,6 +610,15 @@ def extract_clustered_main_palette_colors(
     )
 
     scored_records = score_cluster_records(cluster_records)
+
+    if selection_mode == "diverse":
+        return select_clustered_palette_colors_diverse(
+            cluster_records=scored_records,
+            color_count=color_count,
+            preserve_darkest=preserve_darkest,
+            preserve_lightest=preserve_lightest,
+            min_color_distance=min_color_distance,
+        )
 
     return select_clustered_palette_colors(
         cluster_records=scored_records,

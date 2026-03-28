@@ -111,12 +111,14 @@
                     <select id="image_palette_method" name="image_palette_method">
                         <option value="clustered_main_nearest" {% if values.image_palette_method == "clustered_main_nearest" %}selected{% endif %}>Main colors (nearest real)</option>
                         <option value="clustered_main_frequency" {% if values.image_palette_method == "clustered_main_frequency" %}selected{% endif %}>Main colors (most frequent in cluster)</option>
+                        <option value="clustered_main_diverse" {% if values.image_palette_method == "clustered_main_diverse" %}selected{% endif %}>Main colors (diverse)</option>
                         <option value="top_frequency" {% if values.image_palette_method == "top_frequency" %}selected{% endif %}>Top frequency</option>
                     </select>
 
                     <p class="help-text">
                         Main colors (nearest real) chooses the real image color closest to each cluster center.
                         Main colors (most frequent in cluster) chooses the most common exact color inside each cluster.
+                        Main colors (diverse) pushes harder for hue-family variety across the selected palette.
                         Top frequency uses the most common exact colors overall.
                     </p>
 
