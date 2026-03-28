@@ -121,10 +121,14 @@
                             name="reconstruction_mode"
                             required
                         >
-                            <option value="scanline" {% if values.reconstruction_mode == "scanline" %}selected{% endif %}>Scanline</option>
-                            <option value="random_seeded" {% if values.reconstruction_mode == "random_seeded" %}selected{% endif %}>Random seeded</option>
-                            <option value="random_unseeded" {% if values.reconstruction_mode == "random_unseeded" %}selected{% endif %}>Random unseeded</option>
-                            <option value="weighted_random" {% if values.reconstruction_mode == "weighted_random" %}selected{% endif %}>Weighted random</option>
+                            {% for mode in reconstruction_modes %}
+                                <option
+                                    value="{{ mode.value }}"
+                                    {% if values.reconstruction_mode == mode.value %}selected{% endif %}
+                                >
+                                    {{ mode.label }}
+                                </option>
+                            {% endfor %}
                         </select>
                         <div id="mode-description" class="setting-description" aria-live="polite"></div>
                     </div>
@@ -212,6 +216,13 @@
     </main>
 
     <script>
+        // ============================================================
+        // DOM references
+        // ============================================================
+        // These are the form elements the script needs to read from
+        // or update dynamically.
+        // ============================================================
+
         const modeField = document.getElementById("reconstruction_mode");
         const seedField = document.getElementById("random_seed");
         const frameCountField = document.getElementById("frame_count");
@@ -223,24 +234,39 @@
         const advisoryBox = document.getElementById("frame-advisory-box");
         const advisoryText = document.getElementById("frame-advisory-text");
 
+        // Passed in from Flask so preset palettes can populate the textarea.
         const palettePresets = {{ palette_presets|tojson|safe }};
 
-        const reconstructionDescriptions = {
-            "scanline": "Scanline places replacement colors in the order the image is scanned from top-left to bottom-right. This gives a stable, structured result.",
-            "random_seeded": "Random seeded shuffles placement while staying repeatable. The same seed and settings should produce the same result.",
-            "random_unseeded": "Random unseeded shuffles placement differently every run. Good for exploring new variations quickly.",
-            "weighted_random": "Weighted random uses randomness but favors lower-score assignments more strongly within each source-color group while preserving exact counts."
-        };
+        // Eexplanations for each reconstruction mode.
+        const reconstructionModes = {{ reconstruction_modes|tojson|safe }};
+
+        // ============================================================
+        // Mode-dependent UI helpers
+        // ============================================================
+        // These update the form based on the selected reconstruction mode.
+        // ============================================================
+
+        function getSelectedModeConfig() {
+            return reconstructionModes.find(mode => mode.value === modeField.value) || null;
+        }
 
         function syncSeedState() {
-            const usesSeed = modeField.value === "random_seeded" || modeField.value === "weighted_random";
+            const selectedMode = getSelectedModeConfig();
+            const usesSeed = selectedMode ? Boolean(selectedMode.uses_seed) : false;
             seedField.disabled = !usesSeed;
         }
 
         function updateModeDescription() {
-            const mode = modeField.value;
-            modeDescription.textContent = reconstructionDescriptions[mode] || "";
-        }
+            const selectedMode = getSelectedModeConfig();
+            modeDescription.textContent = selectedMode ? selectedMode.description : "";
+}
+
+        // ============================================================
+        // Palette helpers
+        // ============================================================
+        // These parse the palette textarea and keep related UI elements
+        // like the advisory and swatch preview in sync.
+        // ============================================================
 
         function getPaletteLines() {
             return paletteField.value
@@ -319,6 +345,12 @@
             }
         }
 
+        // ============================================================
+        // Event listeners
+        // ============================================================
+        // These keep the page responsive as the user changes settings.
+        // ============================================================
+
         modeField.addEventListener("change", () => {
             syncSeedState();
             updateModeDescription();
@@ -332,6 +364,12 @@
         });
 
         presetField.addEventListener("change", applyPresetToTextarea);
+
+        // ============================================================
+        // Initial page setup
+        // ============================================================
+        // Run once on page load so all dynamic UI pieces start in sync.
+        // ============================================================
 
         syncSeedState();
         updateModeDescription();

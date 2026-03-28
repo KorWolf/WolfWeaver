@@ -179,5 +179,3 @@ https://www.tumblr.com/teawitch/812178955121623040?source=share
 
 ---
 
-
-![trippy vibrently colored cat gif](output/runs/run_20260327_061138/gifs/rotating_palette.gif)
