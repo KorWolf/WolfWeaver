@@ -57,40 +57,70 @@
             <fieldset>
                 <legend>Palette</legend>
 
-                <label for="selected_preset">Preset palette</label>
-                <select id="selected_preset" name="selected_preset">
-                    <option value="">Custom / Manual palette</option>
-                    {% for preset_name, preset_colors in palette_presets.items() %}
-                        <option
-                            value="{{ preset_name }}"
-                            {% if values.selected_preset == preset_name %}selected{% endif %}
-                        >
-                            {{ preset_name.replace("_", " ").title() }}
-                        </option>
-                    {% endfor %}
+                <label for="palette_source">Palette source</label>
+                <select id="palette_source" name="palette_source">
+                    <option value="manual" {% if values.palette_source == "manual" %}selected{% endif %}>Manual / Preset</option>
+                    <option value="image_top_frequency" {% if values.palette_source == "image_top_frequency" %}selected{% endif %}>Image-derived (most frequent colors)</option>
                 </select>
 
                 <p class="help-text">
-                    Choose a preset to autofill the palette box below, or leave it on custom and enter your own colors.
+                    Manual / Preset lets you choose a preset or type your own palette.
+                    Image-derived builds a palette automatically from the most frequent colors in the source image.
                 </p>
 
-                <label for="palette_text">Hex colors, one per line</label>
-                <textarea
-                    id="palette_text"
-                    name="palette_text"
-                    rows="14"
-                    required
-                >{{ values.palette_text }}</textarea>
+                <div id="manual-palette-controls">
+                    <label for="selected_preset">Preset palette</label>
+                    <select id="selected_preset" name="selected_preset">
+                        <option value="">Custom / Manual palette</option>
+                        {% for preset in palette_preset_options %}
+                            <option
+                                value="{{ preset.value }}"
+                                {% if values.selected_preset == preset.value %}selected{% endif %}
+                            >
+                                {{ preset.label }}
+                            </option>
+                        {% endfor %}
+                    </select>
 
-                <p class="help-text">
-                    Example: <code>#00A94F</code><br>
-                    The number of lines here is your palette size. Larger palettes increase processing time.
-                </p>
+                    <p class="help-text">
+                        Choose a preset to autofill the palette box below, or leave it on custom and enter your own colors.
+                    </p>
 
-                <div class="palette-preview-block">
-                    <h2 class="palette-preview-heading">Palette preview</h2>
-                    <p class="help-text">These swatches show the exact colors currently in the palette box.</p>
-                    <div id="palette-swatch-grid" class="palette-swatch-grid" aria-live="polite"></div>
+                    <label for="palette_text">Hex colors, one per line</label>
+                    <textarea
+                        id="palette_text"
+                        name="palette_text"
+                        rows="14"
+                        required
+                    >{{ values.palette_text }}</textarea>
+
+                    <p class="help-text">
+                        Example: <code>#00A94F</code><br>
+                        The number of lines here is your palette size. Larger palettes increase processing time.
+                    </p>
+
+                    <div class="palette-preview-block">
+                        <h2 class="palette-preview-heading">Palette preview</h2>
+                        <p class="help-text">These swatches show the exact colors currently in the palette box.</p>
+                        <div id="palette-swatch-grid" class="palette-swatch-grid" aria-live="polite"></div>
+                    </div>
+                </div>
+
+                <div id="image-palette-controls">
+                    <label for="image_palette_count">Image-derived palette color count</label>
+                    <input
+                        id="image_palette_count"
+                        name="image_palette_count"
+                        type="number"
+                        min="1"
+                        step="1"
+                        value="{{ values.image_palette_count }}"
+                        required
+                    >
+                    <p class="help-text">
+                        Uses the most frequent colors found in the source image.
+                        If the image contains fewer unique colors than requested, all unique colors will be used.
+                    </p>
                 </div>
             </fieldset>
 
@@ -219,10 +249,8 @@
         // ============================================================
         // DOM references
         // ============================================================
-        // These are the form elements the script needs to read from
-        // or update dynamically.
-        // ============================================================
 
+        const paletteSourceField = document.getElementById("palette_source");
         const modeField = document.getElementById("reconstruction_mode");
         const seedField = document.getElementById("random_seed");
         const frameCountField = document.getElementById("frame_count");
@@ -231,19 +259,18 @@
         const swatchGrid = document.getElementById("palette-swatch-grid");
         const modeDescription = document.getElementById("mode-description");
 
+        const manualPaletteControls = document.getElementById("manual-palette-controls");
+        const imagePaletteControls = document.getElementById("image-palette-controls");
+        const imagePaletteCountField = document.getElementById("image_palette_count");
+
         const advisoryBox = document.getElementById("frame-advisory-box");
         const advisoryText = document.getElementById("frame-advisory-text");
 
-        // Passed in from Flask so preset palettes can populate the textarea.
         const palettePresets = {{ palette_presets|tojson|safe }};
-
-        // Eexplanations for each reconstruction mode.
         const reconstructionModes = {{ reconstruction_modes|tojson|safe }};
 
         // ============================================================
-        // Mode-dependent UI helpers
-        // ============================================================
-        // These update the form based on the selected reconstruction mode.
+        // Reconstruction mode helpers
         // ============================================================
 
         function getSelectedModeConfig() {
@@ -259,13 +286,25 @@
         function updateModeDescription() {
             const selectedMode = getSelectedModeConfig();
             modeDescription.textContent = selectedMode ? selectedMode.description : "";
-}
+        }
+
+        // ============================================================
+        // Palette source helpers
+        // ============================================================
+
+        function syncPaletteSourceState() {
+            const useManualPalette = paletteSourceField.value === "manual";
+
+            manualPaletteControls.style.display = useManualPalette ? "block" : "none";
+            imagePaletteControls.style.display = useManualPalette ? "none" : "block";
+
+            paletteField.disabled = !useManualPalette;
+            presetField.disabled = !useManualPalette;
+            imagePaletteCountField.disabled = useManualPalette;
+        }
 
         // ============================================================
         // Palette helpers
-        // ============================================================
-        // These parse the palette textarea and keep related UI elements
-        // like the advisory and swatch preview in sync.
         // ============================================================
 
         function getPaletteLines() {
@@ -281,7 +320,13 @@
 
         function updateAdvisory() {
             const frameCount = parseInt(frameCountField.value || "0", 10);
-            const paletteSize = getPaletteSize();
+
+            let paletteSize = 0;
+            if (paletteSourceField.value === "manual") {
+                paletteSize = getPaletteSize();
+            } else {
+                paletteSize = parseInt(imagePaletteCountField.value || "0", 10);
+            }
 
             let message = "";
 
@@ -348,15 +393,19 @@
         // ============================================================
         // Event listeners
         // ============================================================
-        // These keep the page responsive as the user changes settings.
-        // ============================================================
 
         modeField.addEventListener("change", () => {
             syncSeedState();
             updateModeDescription();
         });
 
+        paletteSourceField.addEventListener("change", () => {
+            syncPaletteSourceState();
+            updateAdvisory();
+        });
+
         frameCountField.addEventListener("input", updateAdvisory);
+        imagePaletteCountField.addEventListener("input", updateAdvisory);
 
         paletteField.addEventListener("input", () => {
             updateAdvisory();
@@ -368,11 +417,10 @@
         // ============================================================
         // Initial page setup
         // ============================================================
-        // Run once on page load so all dynamic UI pieces start in sync.
-        // ============================================================
 
         syncSeedState();
         updateModeDescription();
+        syncPaletteSourceState();
         updateAdvisory();
         renderSwatches();
     </script>

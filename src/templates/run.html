@@ -89,12 +89,22 @@
     </main>
 
     <script>
+        // ============================================================
+        // Static values and DOM references
+        // ============================================================
+        // jobId comes from Flask when the page is rendered.
+        // The rest are the page elements that will be updated while
+        // the run is in progress.
+        // ============================================================
+
         const jobId = "{{ job_id }}";
+
         const timerEl = document.getElementById("run-timer");
         const statusEl = document.getElementById("run-status");
+        const framesEl = document.getElementById("run-frames");
         const firstFrameTimeEl = document.getElementById("first-frame-time");
         const estimatedRemainingEl = document.getElementById("estimated-remaining");
-        const framesEl = document.getElementById("run-frames");
+
         const progressBarEl = document.getElementById("progress-bar");
         const progressTextEl = document.getElementById("progress-text");
 
@@ -104,15 +114,32 @@
         const summarySection = document.getElementById("summary-section");
         const gifSection = document.getElementById("gif-section");
 
+        // ============================================================
+        // Client-side timer state
+        // ============================================================
+        // This timer starts immediately when the page loads so the user
+        // sees motion even before the first poll comes back.
+        // Once the run completes, we lock it to the final runtime value
+        // reported by the backend.
+        // ============================================================
+
         let runStartedAtMs = Date.now();
         let timerIntervalId = null;
         let finalRuntimeLocked = false;
+
+        // ============================================================
+        // Formatting helpers
+        // ============================================================
 
         function formatElapsed(secondsTotal) {
             const minutes = Math.floor(secondsTotal / 60);
             const seconds = secondsTotal % 60;
             return `${minutes}m ${seconds.toFixed(1)}s`;
         }
+
+        // ============================================================
+        // Timer helpers
+        // ============================================================
 
         function startClientTimer() {
             if (timerIntervalId !== null) {
@@ -140,6 +167,14 @@
             timerEl.textContent = `Run timer: ${formatElapsed(finalSeconds)}`;
         }
 
+        // ============================================================
+        // Timing detail helpers
+        // ============================================================
+        // These update the two new status lines:
+        // - first frame time
+        // - estimated remaining time
+        // ============================================================
+
         function updateTimingDetails(data) {
             if (data.first_frame_text) {
                 firstFrameTimeEl.textContent = `First frame time: ${data.first_frame_text}`;
@@ -155,6 +190,15 @@
                 estimatedRemainingEl.textContent = "Estimated remaining: waiting for first frame...";
             }
         }
+
+        // ============================================================
+        // Frame rendering
+        // ============================================================
+        // Each completed frame gets shown as a card with:
+        // - preview image
+        // - frame number
+        // - download link
+        // ============================================================
 
         function renderFrames(frameUrls) {
             frameGrid.innerHTML = "";
@@ -188,35 +232,12 @@
             }
         }
 
-        async function pollStatus() {
-            const response = await fetch(`/api/run/${jobId}`);
-            const data = await response.json();
-
-            if (data.status === "failed") {
-                statusEl.textContent = `Status: failed - ${data.error}`;
-                progressBarEl.style.width = "100%";
-                progressTextEl.textContent = "Failed";
-                stopClientTimer(0);
-                return;
-            }
-
-            statusEl.textContent = `Status: ${data.status}`;
-            framesEl.textContent = `Frames completed: ${data.completed_frames} / ${data.frame_count}`;
-            progressBarEl.style.width = `${data.percent_complete}%`;
-            progressTextEl.textContent = `${data.percent_complete}%`;
-
-            updateTimingDetails(data);
-
-            renderFrames(data.frame_urls || []);
-
-            if (data.status === "completed") {
-                stopClientTimer(Number(data.total_runtime_seconds || 0));
-                renderCompletedResults(data);
-                return;
-            }
-
-            setTimeout(pollStatus, 1000);
-        }
+        // ============================================================
+        // Final-results rendering
+        // ============================================================
+        // Once the run completes, fill in the summary section and show
+        // the GIF if one was generated.
+        // ============================================================
 
         function renderCompletedResults(data) {
             document.getElementById("summary-run-dir").textContent = data.run_dir;
@@ -240,6 +261,49 @@
                 gifSection.classList.remove("hidden");
             }
         }
+
+        // ============================================================
+        // Polling
+        // ============================================================
+        // This is the core of the live page:
+        // - request the latest job JSON from Flask
+        // - update the page
+        // - repeat every second until the run completes or fails
+        // ============================================================
+
+        async function pollStatus() {
+            const response = await fetch(`/api/run/${jobId}`);
+            const data = await response.json();
+
+            if (data.status === "failed") {
+                statusEl.textContent = `Status: failed - ${data.error}`;
+                progressBarEl.style.width = "100%";
+                progressTextEl.textContent = "Failed";
+                stopClientTimer(0);
+                updateTimingDetails(data);
+                return;
+            }
+
+            statusEl.textContent = `Status: ${data.status}`;
+            framesEl.textContent = `Frames completed: ${data.completed_frames} / ${data.frame_count}`;
+            progressBarEl.style.width = `${data.percent_complete}%`;
+            progressTextEl.textContent = `${data.percent_complete}%`;
+
+            updateTimingDetails(data);
+            renderFrames(data.frame_urls || []);
+
+            if (data.status === "completed") {
+                stopClientTimer(Number(data.total_runtime_seconds || 0));
+                renderCompletedResults(data);
+                return;
+            }
+
+            setTimeout(pollStatus, 1000);
+        }
+
+        // ============================================================
+        // Initial page startup
+        // ============================================================
 
         startClientTimer();
         pollStatus();
