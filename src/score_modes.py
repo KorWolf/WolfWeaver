@@ -1,5 +1,6 @@
 from typing import Callable
 import colorsys
+import math
 
 
 # ============================================================
@@ -9,6 +10,7 @@ import colorsys
 # - weighted RGB difference
 # - hue difference
 # - saturation / lightness difference
+# - perceptual Lab distance
 # ============================================================
 
 def rgb_to_hsv_components(r: int, g: int, b: int) -> tuple[float, float, float]:
@@ -116,6 +118,103 @@ def calculate_warm_bias_difference(
     source_warm_bias = calculate_warm_bias(source_r, source_g, source_b)
     replacement_warm_bias = calculate_warm_bias(replacement_r, replacement_g, replacement_b)
     return abs(source_warm_bias - replacement_warm_bias)
+
+
+# ============================================================
+# Lab / Delta E helpers
+# ============================================================
+# These helpers convert sRGB into CIE Lab and compute a simple
+# perceptual Delta E distance. This is a better approximation of
+# how humans perceive color difference than raw RGB distance.
+# ============================================================
+
+def srgb_channel_to_linear(channel_0_to_255: int) -> float:
+    """
+    Convert one sRGB channel from 0-255 to linear RGB in 0-1.
+    """
+    value = channel_0_to_255 / 255.0
+
+    if value <= 0.04045:
+        return value / 12.92
+
+    return ((value + 0.055) / 1.055) ** 2.4
+
+
+def rgb_to_xyz(r: int, g: int, b: int) -> tuple[float, float, float]:
+    """
+    Convert sRGB to XYZ using D65 reference white.
+    """
+    r_lin = srgb_channel_to_linear(r)
+    g_lin = srgb_channel_to_linear(g)
+    b_lin = srgb_channel_to_linear(b)
+
+    # Standard sRGB -> XYZ matrix (D65)
+    x = (r_lin * 0.4124564) + (g_lin * 0.3575761) + (b_lin * 0.1804375)
+    y = (r_lin * 0.2126729) + (g_lin * 0.7151522) + (b_lin * 0.0721750)
+    z = (r_lin * 0.0193339) + (g_lin * 0.1191920) + (b_lin * 0.9503041)
+
+    return x, y, z
+
+
+def xyz_f(t: float) -> float:
+    """
+    Helper function for XYZ -> Lab conversion.
+    """
+    delta = 6 / 29
+
+    if t > (delta ** 3):
+        return t ** (1 / 3)
+
+    return (t / (3 * (delta ** 2))) + (4 / 29)
+
+
+def rgb_to_lab(r: int, g: int, b: int) -> tuple[float, float, float]:
+    """
+    Convert sRGB to CIE Lab using D65 white point.
+    """
+    x, y, z = rgb_to_xyz(r, g, b)
+
+    # D65 reference white
+    xn = 0.95047
+    yn = 1.00000
+    zn = 1.08883
+
+    fx = xyz_f(x / xn)
+    fy = xyz_f(y / yn)
+    fz = xyz_f(z / zn)
+
+    l = (116 * fy) - 16
+    a = 500 * (fx - fy)
+    b_value = 200 * (fy - fz)
+
+    return l, a, b_value
+
+
+def calculate_delta_e_cie76(
+    source_r: int,
+    source_g: int,
+    source_b: int,
+    replacement_r: int,
+    replacement_g: int,
+    replacement_b: int,
+) -> float:
+    """
+    Calculate CIE76 Delta E distance between two sRGB colors.
+
+    Lower values mean the colors are perceptually closer.
+    """
+    source_l, source_a, source_b_lab = rgb_to_lab(source_r, source_g, source_b)
+    replacement_l, replacement_a, replacement_b_lab = rgb_to_lab(
+        replacement_r,
+        replacement_g,
+        replacement_b,
+    )
+
+    return math.sqrt(
+        ((source_l - replacement_l) ** 2)
+        + ((source_a - replacement_a) ** 2)
+        + ((source_b_lab - replacement_b_lab) ** 2)
+    )
 
 
 # ============================================================
@@ -249,14 +348,9 @@ def calculate_difference_score_accent_aware(
     vivid_source = source_sat_strength >= 0.18
     vivid_replacement = replacement_sat_strength >= 0.12
 
-    # Vivid colors should resist being matched to noticeably duller colors.
     dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 95.0
-
-    # Hue mismatches matter more when the source color is vivid.
     hue_weight_multiplier = 1.0 + (source_sat_strength * 2.4)
 
-    # Add a stronger penalty when a vivid source color is also being
-    # shifted far in hue to another vivid family.
     vivid_hue_penalty = 0.0
     if vivid_source and vivid_replacement and hue_distance > 14.0:
         vivid_hue_penalty = hue_distance * 0.70
@@ -289,11 +383,6 @@ def calculate_difference_score_separation_aware(
     This mode is more aggressive about keeping nearby color families
     apart, especially warm hues that often drift into one another
     such as hair, skin, beige cloth, and gold accents.
-
-    Compared with the earlier version, this iteration:
-    - strengthens hue pressure further
-    - adds warm-family separation
-    - keeps lightness important so large regions do not collapse
     """
     weighted_rgb_difference = calculate_weighted_rgb_difference(
         source_r=source_r,
@@ -342,13 +431,10 @@ def calculate_difference_score_separation_aware(
     dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 105.0
     hue_weight_multiplier = 1.0 + (source_sat_strength * 2.6)
 
-    # Push visibly different vivid families apart more strongly.
     vivid_family_penalty = 0.0
     if vivid_source and vivid_replacement and hue_distance > 12.0:
         vivid_family_penalty = hue_distance * 0.85
 
-    # Warm families are where you were seeing drift, so add a specific
-    # warm-bias separation term to reduce skin/hair/cloth blending.
     warm_family_penalty = 0.0
     if source_is_warm or replacement_is_warm:
         warm_family_penalty = warm_bias_difference * 0.35
@@ -364,6 +450,70 @@ def calculate_difference_score_separation_aware(
     )
 
 
+def calculate_difference_score_perceptual_lab(
+    source_r: int,
+    source_g: int,
+    source_b: int,
+    source_s: int,
+    source_l: float,
+    replacement_r: int,
+    replacement_g: int,
+    replacement_b: int,
+    replacement_s: int,
+    replacement_l: float,
+) -> float:
+    """
+    Perceptual Lab scoring.
+
+    This uses Delta E (CIE76) as the main color-distance term, then
+    adds moderate support from lightness, saturation, and hue so that:
+    - overall perceived color closeness improves
+    - small vivid accents still have some protection
+    - structurally important lightness differences remain relevant
+    """
+    delta_e = calculate_delta_e_cie76(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+
+    saturation_difference = abs(source_s - replacement_s)
+    lightness_difference = abs(source_l - replacement_l)
+    hue_distance = calculate_hue_distance(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+
+    source_sat_strength = calculate_source_saturation_strength(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+    )
+    replacement_sat_strength = calculate_replacement_saturation_strength(
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+
+    dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 55.0
+    hue_weight_multiplier = 1.0 + (source_sat_strength * 1.6)
+
+    return (
+        (delta_e * 0.62)
+        + (lightness_difference * 0.16)
+        + (saturation_difference * 0.10)
+        + (hue_distance * 0.08 * hue_weight_multiplier)
+        + (dull_replacement_penalty * 0.04)
+    )
+
+
 # ============================================================
 # Mode registry
 # ============================================================
@@ -375,6 +525,7 @@ SCORE_MODE_FUNCTIONS: dict[str, Callable[..., float]] = {
     "weighted_rgb_sl": calculate_difference_score_weighted,
     "accent_aware": calculate_difference_score_accent_aware,
     "separation_aware": calculate_difference_score_separation_aware,
+    "perceptual_lab": calculate_difference_score_perceptual_lab,
 }
 
 

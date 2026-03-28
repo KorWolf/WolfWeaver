@@ -126,6 +126,11 @@ def build_score_mode_options() -> list[dict]:
             "label": "Separation aware",
             "description": "Pushes nearby color families apart more aggressively, which can help reduce yellow/beige drift across hair, skin, cloth, and warm accents.",
         },
+        {
+            "value": "perceptual_lab",
+            "label": "Perceptual Lab",
+            "description": "Uses perceptual Lab color distance as the main matching term, which is generally closer to how people see color differences than raw RGB.",
+        },
     ]
 
 
