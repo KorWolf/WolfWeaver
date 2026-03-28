@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pytest_cache/
 
 # Virtual environment
 .venv/
@@ -17,8 +18,20 @@ output/
 *.csv
 *.gif
 *.png
+output/runs/
+*.xlsx
+*.csv
+*.gif
+*.png
 
 # OS files
 .DS_Store
 Thumbs.db
 
+# If you ever want to keep the folder but not its contents:
+# output/*
+# !output/.gitkeep
+
+
+# Uploaded images (user input)
+input/uploads/

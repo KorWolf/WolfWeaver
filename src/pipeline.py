@@ -35,7 +35,28 @@ from src.run_manager import (
 )
 
 
+# ============================================================
+# Palette resolution helpers
+# ============================================================
+# These helpers decide where the palette comes from.
+# A run can either:
+# - use palette colors passed directly in the runtime config
+# - or load a palette JSON file from disk
+# ============================================================
+
 def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Resolve the palette data used for the run.
+
+    Priority:
+    1. If palette_colors is present in config, use those directly.
+       This is what the web UI does after parsing the textarea.
+    2. Otherwise, load the palette from the palette_file path.
+
+    Returns a dict with:
+    - name
+    - colors
+    """
     palette_colors = config.get("palette_colors")
 
     if palette_colors is not None:
@@ -54,7 +75,16 @@ def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
     return load_palette_from_json(palette_path)
 
 
+# ============================================================
+# Runtime config validation
+# ============================================================
+# These checks validate values that affect processing behavior.
+# ============================================================
+
 def validate_runtime_config(config: dict[str, Any]) -> None:
+    """
+    Validate runtime-only numeric settings before processing starts.
+    """
     frame_count = int(config["frame_count"])
     gif_frame_duration_ms = int(config["gif_frame_duration_ms"])
     random_seed = int(config["random_seed"])
@@ -69,6 +99,18 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
         raise ValueError("random_seed must be 0 or greater.")
 
 
+# ============================================================
+# Single-rotation runner
+# ============================================================
+# A "rotation" means:
+# - rotate the palette ordering
+# - build quotas for that rotated palette
+# - calculate differences
+# - assign source colors to replacement colors
+# - reconstruct the image using the selected reconstruction mode
+# - save the frame
+# ============================================================
+
 def run_single_rotation(
     rotation_index: int,
     image_array,
@@ -81,6 +123,12 @@ def run_single_rotation(
     run_subdirs: dict[str, Path],
     save_debug_tables: bool = False,
 ) -> Path:
+    """
+    Run one full palette rotation and save one output frame.
+
+    Returns:
+    - Path to the saved frame PNG
+    """
     palette_size = len(base_palette_data["colors"])
     effective_rotation_index = rotation_index % palette_size
 
@@ -99,6 +147,8 @@ def run_single_rotation(
         total_pixels=total_pixels,
     )
 
+    # Sanity check: the palette quotas should always add up to the total
+    # number of pixels in the source image.
     if int(palette_df["Quota"].sum()) != total_pixels:
         raise ValueError("Palette quota sanity check failed during rotation run.")
 
@@ -146,7 +196,22 @@ def run_single_rotation(
     return frame_path
 
 
+# ============================================================
+# Streaming pipeline
+# ============================================================
+# This generator is used by the Flask background job system.
+# It yields progress updates as frames complete.
+# ============================================================
+
 def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], None, None]:
+    """
+    Run the full pipeline and yield progress updates throughout the run.
+
+    Yield stages:
+    - started
+    - running (after each completed frame)
+    - completed
+    """
     start_time = time.perf_counter()
 
     validate_runtime_config(config)
@@ -188,6 +253,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     frame_paths: list[Path] = []
     frame_timings: list[float] = []
 
+    # Initial update so the UI can show metadata before the first frame finishes.
     yield {
         "status": "started",
         "run_dir": run_dir,
@@ -284,7 +350,17 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     }
 
 
+# ============================================================
+# Non-streaming wrapper
+# ============================================================
+# This is used by the CLI entry point. It runs the same pipeline
+# but only returns the final completed result.
+# ============================================================
+
 def run_pipeline(config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Run the pipeline to completion and return the final result dict.
+    """
     final_result = None
 
     for update in run_pipeline_stream(config):
