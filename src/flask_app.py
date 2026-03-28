@@ -316,6 +316,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     if image_palette_method not in {
         "clustered_main_nearest",
         "clustered_main_frequency",
+        "clustered_main_balanced",
         "clustered_main_diverse",
         "top_frequency",
     }:
@@ -381,6 +382,17 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
                 random_seed=random_seed,
                 representative_mode="most_frequent_real",
                 selection_mode="standard",
+            )
+        elif image_palette_method == "clustered_main_balanced":
+            palette_colors = extract_clustered_main_palette_colors(
+                image_path=source_image_path,
+                color_count=image_palette_count,
+                preserve_darkest=True,
+                preserve_lightest=True,
+                min_color_distance=28.0,
+                random_seed=random_seed,
+                representative_mode="most_frequent_real",
+                selection_mode="balanced",
             )
         elif image_palette_method == "clustered_main_diverse":
             palette_colors = extract_clustered_main_palette_colors(

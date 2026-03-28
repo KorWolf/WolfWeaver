@@ -400,6 +400,132 @@ def select_clustered_palette_colors(
     return [record["hex"] for record in selected_records[:color_count]]
 
 
+def select_clustered_palette_colors_balanced(
+    cluster_records: list[dict],
+    color_count: int,
+    preserve_darkest: bool = True,
+    preserve_lightest: bool = True,
+    min_color_distance: float = 28.0,
+) -> list[str]:
+    """
+    Select the final palette from scored cluster records with mild
+    diversity pressure.
+
+    This mode is intended to sit between:
+    - standard: mostly dominance-driven
+    - diverse: strongly spread across hue families
+
+    Balanced mode:
+    - still respects strong clusters
+    - gently rewards new hue buckets
+    - lightly discourages over-filling with warm variants
+    - avoids forcing diversity too aggressively on simpler images
+    """
+    if color_count < 1:
+        raise ValueError("color_count must be at least 1.")
+
+    if len(cluster_records) == 0:
+        raise ValueError("No cluster records were available for palette selection.")
+
+    selected_records: list[dict] = []
+    selected_rgbs: list[np.ndarray] = []
+    selected_hexes: set[str] = set()
+
+    def add_record(record: dict) -> None:
+        selected_records.append(record)
+        selected_rgbs.append(record["rgb"])
+        selected_hexes.add(record["hex"])
+
+    def try_add_anchor(record: dict, distance_threshold: float) -> bool:
+        if record["hex"] in selected_hexes:
+            return False
+
+        if can_add_color(record["rgb"], selected_rgbs, distance_threshold):
+            add_record(record)
+            return True
+
+        return False
+
+    if preserve_darkest:
+        darkest_record = min(cluster_records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(darkest_record, 0.0)
+
+    if preserve_lightest and len(selected_records) < color_count:
+        lightest_record = max(cluster_records, key=lambda record: (record["lightness"], record["hex"]))
+        try_add_anchor(lightest_record, min_color_distance)
+
+    while len(selected_records) < color_count:
+        best_candidate = None
+        best_candidate_score = None
+
+        used_hue_buckets = {
+            record["hue_bucket"]
+            for record in selected_records
+            if record["hue_bucket"] is not None
+        }
+
+        selected_warm_count = sum(1 for record in selected_records if record["warmth"] >= 80.0)
+        selected_total_count = len(selected_records)
+
+        for record in cluster_records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            if not can_add_color(record["rgb"], selected_rgbs, min_color_distance):
+                continue
+
+            candidate_score = float(record["priority_score"])
+
+            # Mild reward for bringing in a new hue family.
+            if record["hue_bucket"] is not None and record["hue_bucket"] not in used_hue_buckets:
+                candidate_score += 0.09
+
+            # Only gently discourage additional warm colors if the current
+            # selection is already strongly warm-dominated.
+            if selected_total_count > 0:
+                warm_ratio = selected_warm_count / selected_total_count
+
+                if warm_ratio >= 0.65 and record["warmth"] >= 80.0:
+                    candidate_score -= 0.04
+
+                if warm_ratio >= 0.65 and record["warmth"] < 80.0:
+                    candidate_score += 0.05
+
+            # Slight reward for usable saturation so the palette can still
+            # preserve some visual richness.
+            if record["saturation"] >= 35.0 and record["size_ratio"] >= 0.01:
+                candidate_score += 0.02
+
+            if best_candidate is None or candidate_score > best_candidate_score:
+                best_candidate = record
+                best_candidate_score = candidate_score
+
+        if best_candidate is not None:
+            add_record(best_candidate)
+            continue
+
+        relaxed_threshold = max(min_color_distance * 0.5, 10.0)
+
+        for record in cluster_records:
+            if record["hex"] in selected_hexes:
+                continue
+
+            if can_add_color(record["rgb"], selected_rgbs, relaxed_threshold):
+                add_record(record)
+                break
+        else:
+            for record in cluster_records:
+                if record["hex"] in selected_hexes:
+                    continue
+
+                add_record(record)
+                break
+            else:
+                break
+
+    return [record["hex"] for record in selected_records[:color_count]]
+
+
 def select_clustered_palette_colors_diverse(
     cluster_records: list[dict],
     color_count: int,
@@ -575,6 +701,7 @@ def extract_clustered_main_palette_colors(
 
     selection_mode:
     - standard: prioritize strongest clusters with distance filtering
+    - balanced: mildly encourage hue-family spread
     - diverse: prioritize stronger hue-family spread during final selection
     """
     if color_count < 1:
@@ -583,7 +710,7 @@ def extract_clustered_main_palette_colors(
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
 
-    if selection_mode not in {"standard", "diverse"}:
+    if selection_mode not in {"standard", "balanced", "diverse"}:
         raise ValueError(f"Unsupported selection_mode: {selection_mode}")
 
     image_array = load_image(image_path)
@@ -610,6 +737,15 @@ def extract_clustered_main_palette_colors(
     )
 
     scored_records = score_cluster_records(cluster_records)
+
+    if selection_mode == "balanced":
+        return select_clustered_palette_colors_balanced(
+            cluster_records=scored_records,
+            color_count=color_count,
+            preserve_darkest=preserve_darkest,
+            preserve_lightest=preserve_lightest,
+            min_color_distance=min_color_distance,
+        )
 
     if selection_mode == "diverse":
         return select_clustered_palette_colors_diverse(
