@@ -115,12 +115,17 @@ def build_score_mode_options() -> list[dict]:
         {
             "value": "weighted_rgb_sl",
             "label": "Weighted RGB / S / L",
-            "description": "Weighted version of the baseline score that changes how strongly RGB, saturation, and lightness differences affect matching.",
+            "description": "Weighted version of the baseline score that gives more influence to perceptually weighted RGB difference.",
         },
         {
             "value": "accent_aware",
             "label": "Accent aware",
-            "description": "Makes saturation mismatches matter more for saturated source colors, which can help preserve accents like eyes, tongues, and other vivid details.",
+            "description": "Adds hue separation and stronger saturation protection so vivid accents like eyes, tongues, and colored details are less likely to be washed out.",
+        },
+        {
+            "value": "separation_aware",
+            "label": "Separation aware",
+            "description": "Pushes nearby color families apart more aggressively, which can help reduce yellow/beige drift across hair, skin, cloth, and warm accents.",
         },
     ]
 
