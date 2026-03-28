@@ -5,8 +5,7 @@ import colorsys
 # ============================================================
 # Color helpers
 # ============================================================
-# These helpers let the score modes compare colors in a few
-# different ways:
+# These helpers let score modes compare colors using:
 # - weighted RGB difference
 # - hue difference
 # - saturation / lightness difference
@@ -32,7 +31,7 @@ def calculate_weighted_rgb_difference(
     Perceptually weighted RGB difference.
 
     Green differences matter more than blue differences here,
-    which is generally closer to how people notice color change.
+    which is closer to how people tend to notice color change.
     """
     return (
         abs(source_r - replacement_r) * 0.30
@@ -54,7 +53,7 @@ def calculate_hue_distance(
 
     Hue wraps around, so the shortest path on the color wheel
     is used. The result is scaled so it can be combined more
-    easily with other score terms.
+    easily with the other score terms.
     """
     source_h, _, _ = rgb_to_hsv_components(source_r, source_g, source_b)
     replacement_h, _, _ = rgb_to_hsv_components(replacement_r, replacement_g, replacement_b)
@@ -72,9 +71,6 @@ def calculate_source_saturation_strength(
 ) -> float:
     """
     Return source saturation strength in the range 0.0-1.0.
-
-    This is used to make vivid source colors fight harder to
-    stay vivid when matching.
     """
     _, source_s_hsv, _ = rgb_to_hsv_components(source_r, source_g, source_b)
     return float(source_s_hsv)
@@ -92,11 +88,41 @@ def calculate_replacement_saturation_strength(
     return float(replacement_s_hsv)
 
 
+def calculate_warm_bias(
+    r: int,
+    g: int,
+    b: int,
+) -> float:
+    """
+    Estimate how warm a color feels.
+
+    Higher values mean the color leans more toward red/yellow warmth.
+    This helps separate warm families like skin, cloth, gold, and hair.
+    """
+    return float((r * 0.60) + (g * 0.30) - (b * 0.20))
+
+
+def calculate_warm_bias_difference(
+    source_r: int,
+    source_g: int,
+    source_b: int,
+    replacement_r: int,
+    replacement_g: int,
+    replacement_b: int,
+) -> float:
+    """
+    Difference in warmth between source and replacement colors.
+    """
+    source_warm_bias = calculate_warm_bias(source_r, source_g, source_b)
+    replacement_warm_bias = calculate_warm_bias(replacement_r, replacement_g, replacement_b)
+    return abs(source_warm_bias - replacement_warm_bias)
+
+
 # ============================================================
 # Score modes
 # ============================================================
 # Each score mode returns a lower-is-better difference score.
-# The pipeline then uses those scores during assignment.
+# The assignment stage then uses those scores to choose matches.
 # ============================================================
 
 def calculate_difference_score_basic(
@@ -146,9 +172,8 @@ def calculate_difference_score_weighted(
     """
     Weighted variant of the baseline score.
 
-    This leans harder on perceptually weighted RGB difference and
-    slightly reduces the influence of the old saturation/lightness
-    terms compared with the original baseline.
+    This leans harder on weighted RGB difference while still keeping
+    saturation and lightness as important secondary terms.
     """
     weighted_rgb_difference = calculate_weighted_rgb_difference(
         source_r=source_r,
@@ -163,8 +188,8 @@ def calculate_difference_score_weighted(
     lightness_difference = abs(source_l - replacement_l)
 
     return (
-        (weighted_rgb_difference * 0.50)
-        + (saturation_difference * 0.20)
+        (weighted_rgb_difference * 0.52)
+        + (saturation_difference * 0.18)
         + (lightness_difference * 0.30)
     )
 
@@ -184,83 +209,11 @@ def calculate_difference_score_accent_aware(
     """
     Accent-aware scoring.
 
-    This keeps the basic RGB / saturation / lightness idea, but:
-    - uses weighted RGB difference
-    - adds hue separation
-    - makes vivid source colors fight harder to stay vivid
-    - penalizes matching a vivid source color to a dull replacement
-    """
-    weighted_rgb_difference = calculate_weighted_rgb_difference(
-        source_r=source_r,
-        source_g=source_g,
-        source_b=source_b,
-        replacement_r=replacement_r,
-        replacement_g=replacement_g,
-        replacement_b=replacement_b,
-    )
-
-    saturation_difference = abs(source_s - replacement_s)
-    lightness_difference = abs(source_l - replacement_l)
-    hue_distance = calculate_hue_distance(
-        source_r=source_r,
-        source_g=source_g,
-        source_b=source_b,
-        replacement_r=replacement_r,
-        replacement_g=replacement_g,
-        replacement_b=replacement_b,
-    )
-
-    source_sat_strength = calculate_source_saturation_strength(
-        source_r=source_r,
-        source_g=source_g,
-        source_b=source_b,
-    )
-    replacement_sat_strength = calculate_replacement_saturation_strength(
-        replacement_r=replacement_r,
-        replacement_g=replacement_g,
-        replacement_b=replacement_b,
-    )
-
-    # More saturated source colors should resist being mapped to dull colors.
-    dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 60.0
-
-    # Hue differences matter more when the source color is vivid.
-    hue_weight_multiplier = 1.0 + (source_sat_strength * 1.8)
-
-    return (
-        (weighted_rgb_difference * 0.30)
-        + (lightness_difference * 0.20)
-        + (saturation_difference * 0.15)
-        + (hue_distance * 0.20 * hue_weight_multiplier)
-        + (dull_replacement_penalty * 0.15)
-    )
-
-
-def calculate_difference_score_separation_aware(
-    source_r: int,
-    source_g: int,
-    source_b: int,
-    source_s: int,
-    source_l: float,
-    replacement_r: int,
-    replacement_g: int,
-    replacement_b: int,
-    replacement_s: int,
-    replacement_l: float,
-) -> float:
-    """
-    Separation-aware scoring.
-
-    This mode is more aggressive about keeping nearby color families
-    apart, especially warm hues that often drift into one another
-    such as hair, skin, beige cloth, and gold accents.
-
-    It does this by:
+    This mode is tuned to help small vivid details survive better by:
     - using weighted RGB difference
-    - using hue distance more strongly
-    - increasing hue pressure when the source is vivid
-    - applying an extra family-separation penalty for visibly
-      different saturated colors
+    - using hue distance more strongly for vivid source colors
+    - penalizing vivid -> dull matches more aggressively
+    - preserving lightness structure so accents do not drift too far
     """
     weighted_rgb_difference = calculate_weighted_rgb_difference(
         source_r=source_r,
@@ -296,20 +249,118 @@ def calculate_difference_score_separation_aware(
     vivid_source = source_sat_strength >= 0.18
     vivid_replacement = replacement_sat_strength >= 0.12
 
-    family_separation_penalty = 0.0
-    if vivid_source and vivid_replacement and hue_distance > 18.0:
-        family_separation_penalty = hue_distance * 0.65
+    # Vivid colors should resist being matched to noticeably duller colors.
+    dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 95.0
 
-    dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 75.0
-    hue_weight_multiplier = 1.0 + (source_sat_strength * 2.0)
+    # Hue mismatches matter more when the source color is vivid.
+    hue_weight_multiplier = 1.0 + (source_sat_strength * 2.4)
+
+    # Add a stronger penalty when a vivid source color is also being
+    # shifted far in hue to another vivid family.
+    vivid_hue_penalty = 0.0
+    if vivid_source and vivid_replacement and hue_distance > 14.0:
+        vivid_hue_penalty = hue_distance * 0.70
 
     return (
         (weighted_rgb_difference * 0.24)
         + (lightness_difference * 0.18)
         + (saturation_difference * 0.12)
         + (hue_distance * 0.24 * hue_weight_multiplier)
+        + (dull_replacement_penalty * 0.12)
+        + (vivid_hue_penalty * 0.10)
+    )
+
+
+def calculate_difference_score_separation_aware(
+    source_r: int,
+    source_g: int,
+    source_b: int,
+    source_s: int,
+    source_l: float,
+    replacement_r: int,
+    replacement_g: int,
+    replacement_b: int,
+    replacement_s: int,
+    replacement_l: float,
+) -> float:
+    """
+    Separation-aware scoring.
+
+    This mode is more aggressive about keeping nearby color families
+    apart, especially warm hues that often drift into one another
+    such as hair, skin, beige cloth, and gold accents.
+
+    Compared with the earlier version, this iteration:
+    - strengthens hue pressure further
+    - adds warm-family separation
+    - keeps lightness important so large regions do not collapse
+    """
+    weighted_rgb_difference = calculate_weighted_rgb_difference(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+
+    saturation_difference = abs(source_s - replacement_s)
+    lightness_difference = abs(source_l - replacement_l)
+    hue_distance = calculate_hue_distance(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+    warm_bias_difference = calculate_warm_bias_difference(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+
+    source_sat_strength = calculate_source_saturation_strength(
+        source_r=source_r,
+        source_g=source_g,
+        source_b=source_b,
+    )
+    replacement_sat_strength = calculate_replacement_saturation_strength(
+        replacement_r=replacement_r,
+        replacement_g=replacement_g,
+        replacement_b=replacement_b,
+    )
+
+    vivid_source = source_sat_strength >= 0.16
+    vivid_replacement = replacement_sat_strength >= 0.10
+    source_is_warm = calculate_warm_bias(source_r, source_g, source_b) >= 80.0
+    replacement_is_warm = calculate_warm_bias(replacement_r, replacement_g, replacement_b) >= 80.0
+
+    dull_replacement_penalty = max(source_sat_strength - replacement_sat_strength, 0.0) * 105.0
+    hue_weight_multiplier = 1.0 + (source_sat_strength * 2.6)
+
+    # Push visibly different vivid families apart more strongly.
+    vivid_family_penalty = 0.0
+    if vivid_source and vivid_replacement and hue_distance > 12.0:
+        vivid_family_penalty = hue_distance * 0.85
+
+    # Warm families are where you were seeing drift, so add a specific
+    # warm-bias separation term to reduce skin/hair/cloth blending.
+    warm_family_penalty = 0.0
+    if source_is_warm or replacement_is_warm:
+        warm_family_penalty = warm_bias_difference * 0.35
+
+    return (
+        (weighted_rgb_difference * 0.20)
+        + (lightness_difference * 0.18)
+        + (saturation_difference * 0.10)
+        + (hue_distance * 0.26 * hue_weight_multiplier)
         + (dull_replacement_penalty * 0.10)
-        + (family_separation_penalty * 0.12)
+        + (vivid_family_penalty * 0.10)
+        + (warm_family_penalty * 0.06)
     )
 
 
