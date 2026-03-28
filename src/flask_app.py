@@ -67,6 +67,29 @@ def load_default_palette_text() -> str:
     palette_data = load_palette_from_json(Path(defaults["palette_file"]))
     return "\n".join(str(color).upper() for color in palette_data["colors"])
 
+def build_palette_preset_display_options() -> list[dict]:
+    """
+    Build display metadata for palette presets.
+
+    We keep the original preset key as the internal value, but generate
+    a clearer user-facing label that includes the number of colors.
+    """
+    display_options: list[dict] = []
+
+    for preset_key, preset_colors in PALETTE_PRESETS.items():
+        color_count = len(preset_colors)
+        display_label = f"{preset_key.replace('_', ' ').title()} ({color_count})"
+
+        display_options.append(
+            {
+                "value": preset_key,
+                "label": display_label,
+                "color_count": color_count,
+            }
+        )
+
+    return display_options
+
 
 def build_default_form_values() -> dict:
     """
@@ -227,6 +250,13 @@ def build_runtime_text(total_runtime_seconds: float) -> str:
     seconds = total_runtime_seconds % 60
     return f"{minutes}m {seconds:.2f}s"
 
+def build_duration_text(total_seconds: float) -> str:
+    """
+    Convert seconds into a simple 'Xm Ys' string.
+    """
+    minutes = int(total_seconds // 60)
+    seconds = total_seconds % 60
+    return f"{minutes}m {seconds:.2f}s"
 
 # ============================================================
 # Request -> pipeline config conversion
@@ -331,8 +361,6 @@ def run_file_url(path: Path) -> str:
 def serialize_update(update: dict) -> dict:
     """
     Convert a pipeline progress update into a JSON-safe payload for the UI.
-
-    This is what powers the progress page polling endpoint.
     """
     frame_urls = [
         run_file_url(path)
@@ -347,6 +375,7 @@ def serialize_update(update: dict) -> dict:
     total_runtime_seconds = float(update.get("total_runtime_seconds", 0.0))
     frame_count = int(update.get("frame_count", 0))
     completed_frames = int(update.get("completed_frames", 0))
+    frame_timings_seconds = list(update.get("frame_timings_seconds", []))
 
     percent_complete = 0
     if frame_count > 0:
@@ -354,6 +383,23 @@ def serialize_update(update: dict) -> dict:
 
     if update.get("status") == "completed":
         percent_complete = 100
+
+    first_frame_seconds = None
+    if len(frame_timings_seconds) >= 1:
+        first_frame_seconds = float(frame_timings_seconds[0])
+
+    average_frame_seconds = None
+    if len(frame_timings_seconds) >= 1:
+        average_frame_seconds = float(sum(frame_timings_seconds) / len(frame_timings_seconds))
+
+    estimated_remaining_seconds = None
+    remaining_frames = max(frame_count - completed_frames, 0)
+
+    if remaining_frames > 0:
+        if average_frame_seconds is not None:
+            estimated_remaining_seconds = average_frame_seconds * remaining_frames
+        elif first_frame_seconds is not None:
+            estimated_remaining_seconds = first_frame_seconds * remaining_frames
 
     return {
         "status": update.get("status"),
@@ -374,6 +420,16 @@ def serialize_update(update: dict) -> dict:
         "reconstruction_mode": update.get("reconstruction_mode"),
         "frame_urls": frame_urls,
         "gif_url": gif_url,
+        "first_frame_seconds": first_frame_seconds,
+        "first_frame_text": build_duration_text(first_frame_seconds) if first_frame_seconds is not None else None,
+        "average_frame_seconds": average_frame_seconds,
+        "average_frame_text": build_duration_text(average_frame_seconds) if average_frame_seconds is not None else None,
+        "estimated_remaining_seconds": estimated_remaining_seconds,
+        "estimated_remaining_text": (
+            build_duration_text(estimated_remaining_seconds)
+            if estimated_remaining_seconds is not None
+            else None
+        ),
     }
 
 
@@ -425,6 +481,7 @@ def form_page():
         advisory=advisory,
         values=form_values,
         palette_presets=PALETTE_PRESETS,
+        palette_preset_options=build_palette_preset_display_options(),
         reconstruction_modes=RECONSTRUCTION_MODES,
     )
 
@@ -489,6 +546,7 @@ def start_run():
             advisory=advisory,
             values=attempted_values,
             palette_presets=PALETTE_PRESETS,
+            palette_preset_options=build_palette_preset_display_options(),
             reconstruction_modes=RECONSTRUCTION_MODES,
         ), 400
 

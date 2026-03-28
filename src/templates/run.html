@@ -21,6 +21,8 @@
             <p id="run-timer">Run timer: 0m 0.0s</p>
             <p id="run-status">Status: queued</p>
             <p id="run-frames">Frames completed: 0 / 0</p>
+            <p id="first-frame-time">First frame time: waiting for first frame...</p>
+            <p id="estimated-remaining">Estimated remaining: waiting for first frame...</p>
 
             <div class="progress-wrapper" aria-label="Run progress">
                 <div id="progress-bar" class="progress-bar" style="width: 0%;"></div>
@@ -90,6 +92,8 @@
         const jobId = "{{ job_id }}";
         const timerEl = document.getElementById("run-timer");
         const statusEl = document.getElementById("run-status");
+        const firstFrameTimeEl = document.getElementById("first-frame-time");
+        const estimatedRemainingEl = document.getElementById("estimated-remaining");
         const framesEl = document.getElementById("run-frames");
         const progressBarEl = document.getElementById("progress-bar");
         const progressTextEl = document.getElementById("progress-text");
@@ -134,6 +138,22 @@
             }
 
             timerEl.textContent = `Run timer: ${formatElapsed(finalSeconds)}`;
+        }
+
+        function updateTimingDetails(data) {
+            if (data.first_frame_text) {
+                firstFrameTimeEl.textContent = `First frame time: ${data.first_frame_text}`;
+            } else {
+                firstFrameTimeEl.textContent = "First frame time: waiting for first frame...";
+            }
+
+            if (data.estimated_remaining_text) {
+                estimatedRemainingEl.textContent = `Estimated remaining: ${data.estimated_remaining_text}`;
+            } else if (data.status === "completed") {
+                estimatedRemainingEl.textContent = "Estimated remaining: 0m 0.00s";
+            } else {
+                estimatedRemainingEl.textContent = "Estimated remaining: waiting for first frame...";
+            }
         }
 
         function renderFrames(frameUrls) {
@@ -184,6 +204,8 @@
             framesEl.textContent = `Frames completed: ${data.completed_frames} / ${data.frame_count}`;
             progressBarEl.style.width = `${data.percent_complete}%`;
             progressTextEl.textContent = `${data.percent_complete}%`;
+
+            updateTimingDetails(data);
 
             renderFrames(data.frame_urls || []);
 
