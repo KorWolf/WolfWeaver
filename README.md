@@ -5,6 +5,7 @@ A local web-based tool for transforming images into limited color palettes while
 Instead of just “approximating” colors, this pipeline enforces exact color quotas and lets you explore different ways those colors are arranged across the image.
 
 The long term goal is to get this to a point where I can make detailed weaving patterns form any image.
+
 ---
 
 ## What it does
@@ -209,6 +210,7 @@ This has a big impact on how colors shift during reconstruction.
   * retro / themed palettes
 * Live color swatch preview
 * Editable after selection
+
 Note: match frame count to total colors for max color rotation frames, they make fun GIFs
 
 ### Image-derived palettes
@@ -297,6 +299,7 @@ More detailed examples will be added over time and a deep dive page is planned f
 This project is free for personal use.
 
 If you find it useful and want to support development:
+
 Buy me a coffee: https://ko-fi.com/korwolf
 
 ---
@@ -307,6 +310,7 @@ If you wish to use this for:
 * business
 * client work
 * or any revenue-generating project
+
 please reach out for licensing.
 
 ---
@@ -316,6 +320,7 @@ please reach out for licensing.
 If you don't want to run the pipeline yourself, I can generate images and GIFs for you.
 * 1$ minimun per image run
 * Final cost depends on time and image complexity
+
 Requests can be made through my Ko-fi (https://ko-fi.com/korwolf).
 
 ---
@@ -343,6 +348,9 @@ https://www.tumblr.com/teawitch/812178955121623040?source=share
 * Additional reconstruction modes (block-based, dithering, etc.)
 * Palette grouping and filtering
 * Performance improvements
-* Export/import configs
+* Import configs/save settings as preset
+* Ability to generate the image inside a grid for weaving patterns
+* Hex code matcher to common thread/yarn colors/names
+* Deep dive into settings and their outputs
 
 ---
