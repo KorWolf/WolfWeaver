@@ -42,6 +42,60 @@ from src.run_manager import (
 
 
 # ============================================================
+# Progress update helper
+# ============================================================
+
+def build_progress_update(
+    *,
+    status: str,
+    stage_label: str,
+    run_dir=None,
+    config_snapshot_path=None,
+    source_stats_csv=None,
+    frame_paths=None,
+    gif_path=None,
+    image_width=None,
+    image_height=None,
+    total_pixels=None,
+    unique_source_colors=None,
+    frame_count: int = 0,
+    frame_timings_seconds=None,
+    total_runtime_seconds: float = 0.0,
+    palette_name=None,
+    palette_size=None,
+    reconstruction_mode=None,
+    score_mode=None,
+    postprocess_mode=None,
+    completed_frames: int = 0,
+) -> dict[str, Any]:
+    """
+    Build a consistent progress update payload for the UI.
+    """
+    return {
+        "status": status,
+        "stage_label": stage_label,
+        "run_dir": run_dir,
+        "config_snapshot_path": config_snapshot_path,
+        "source_stats_csv": source_stats_csv,
+        "frame_paths": list(frame_paths or []),
+        "gif_path": gif_path,
+        "image_width": image_width,
+        "image_height": image_height,
+        "total_pixels": total_pixels,
+        "unique_source_colors": unique_source_colors,
+        "frame_count": frame_count,
+        "frame_timings_seconds": list(frame_timings_seconds or []),
+        "total_runtime_seconds": total_runtime_seconds,
+        "palette_name": palette_name,
+        "palette_size": palette_size,
+        "reconstruction_mode": reconstruction_mode,
+        "score_mode": score_mode,
+        "postprocess_mode": postprocess_mode,
+        "completed_frames": completed_frames,
+    }
+
+
+# ============================================================
 # Palette resolution helpers
 # ============================================================
 # A run can get its palette from either:
@@ -352,8 +406,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     Run the full pipeline and yield progress updates.
 
     Yield stages:
-    - started
-    - running (after each completed frame)
+    - running
     - completed
     """
     start_time = time.perf_counter()
@@ -371,9 +424,32 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     score_mode = str(config.get("score_mode", "basic_rgb_sl"))
     postprocess_mode = str(config.get("postprocess_mode", "none"))
     random_seed = int(config["random_seed"])
+    palette_source = str(config.get("palette_source", "manual"))
 
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
+
+    # Report the palette step first so the user can tell what setup phase is active.
+    if palette_source == "image":
+        yield build_progress_update(
+            status="running",
+            stage_label="Building image-derived palette",
+            frame_count=frame_count,
+            total_runtime_seconds=time.perf_counter() - start_time,
+            reconstruction_mode=reconstruction_mode,
+            score_mode=score_mode,
+            postprocess_mode=postprocess_mode,
+        )
+    else:
+        yield build_progress_update(
+            status="running",
+            stage_label="Using manual palette",
+            frame_count=frame_count,
+            total_runtime_seconds=time.perf_counter() - start_time,
+            reconstruction_mode=reconstruction_mode,
+            score_mode=score_mode,
+            postprocess_mode=postprocess_mode,
+        )
 
     # Resolve palette data inside the worker so heavier image-derived
     # palette methods do not block the Flask request path.
@@ -384,23 +460,84 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     config["palette_colors"] = list(base_palette_data["colors"])
     config["palette_name"] = str(base_palette_data.get("name", "unnamed_palette"))
 
+    palette_size = len(base_palette_data["colors"])
+
+    yield build_progress_update(
+        status="running",
+        stage_label="Preparing run output folders",
+        frame_count=frame_count,
+        total_runtime_seconds=time.perf_counter() - start_time,
+        palette_name=base_palette_data.get("name", "unnamed_palette"),
+        palette_size=palette_size,
+        reconstruction_mode=reconstruction_mode,
+        score_mode=score_mode,
+        postprocess_mode=postprocess_mode,
+    )
+
     # Prepare run output folders and save a config snapshot for traceability.
     run_dir = create_run_directory()
     run_subdirs = create_run_subdirectories(run_dir)
     config_snapshot_path = save_config_snapshot(config, run_dir)
 
-    palette_size = len(base_palette_data["colors"])
+    yield build_progress_update(
+        status="running",
+        stage_label="Loading source image",
+        run_dir=run_dir,
+        config_snapshot_path=config_snapshot_path,
+        frame_count=frame_count,
+        total_runtime_seconds=time.perf_counter() - start_time,
+        palette_name=base_palette_data.get("name", "unnamed_palette"),
+        palette_size=palette_size,
+        reconstruction_mode=reconstruction_mode,
+        score_mode=score_mode,
+        postprocess_mode=postprocess_mode,
+    )
 
     # Load source image and derive basic image stats.
     image_array = load_image(image_path)
     height, width = get_image_dimensions(image_array)
     total_pixels = width * height
 
+    yield build_progress_update(
+        status="running",
+        stage_label="Counting source colors",
+        run_dir=run_dir,
+        config_snapshot_path=config_snapshot_path,
+        image_width=width,
+        image_height=height,
+        total_pixels=total_pixels,
+        frame_count=frame_count,
+        total_runtime_seconds=time.perf_counter() - start_time,
+        palette_name=base_palette_data.get("name", "unnamed_palette"),
+        palette_size=palette_size,
+        reconstruction_mode=reconstruction_mode,
+        score_mode=score_mode,
+        postprocess_mode=postprocess_mode,
+    )
+
     color_freq = extract_color_frequencies(image_array)
     sum_counts = sum(color_freq.values())
 
     if total_pixels != sum_counts:
         raise ValueError("Sanity check failed: total pixel count does not match summed frequencies.")
+
+    yield build_progress_update(
+        status="running",
+        stage_label="Preparing source color table",
+        run_dir=run_dir,
+        config_snapshot_path=config_snapshot_path,
+        image_width=width,
+        image_height=height,
+        total_pixels=total_pixels,
+        unique_source_colors=len(color_freq),
+        frame_count=frame_count,
+        total_runtime_seconds=time.perf_counter() - start_time,
+        palette_name=base_palette_data.get("name", "unnamed_palette"),
+        palette_size=palette_size,
+        reconstruction_mode=reconstruction_mode,
+        score_mode=score_mode,
+        postprocess_mode=postprocess_mode,
+    )
 
     # Build and export source color stats once for the whole run.
     color_stats_df = build_color_stats_dataframe(color_freq)
@@ -410,31 +547,32 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     frame_paths: list[Path] = []
     frame_timings: list[float] = []
 
-    # Initial progress update so the UI can render metadata before frame 1 finishes.
-    yield {
-        "status": "started",
-        "run_dir": run_dir,
-        "config_snapshot_path": config_snapshot_path,
-        "source_stats_csv": source_stats_csv,
-        "frame_paths": [],
-        "gif_path": None,
-        "image_width": width,
-        "image_height": height,
-        "total_pixels": total_pixels,
-        "unique_source_colors": len(color_freq),
-        "frame_count": frame_count,
-        "frame_timings_seconds": [],
-        "total_runtime_seconds": 0.0,
-        "palette_name": base_palette_data.get("name", "unnamed_palette"),
-        "palette_size": palette_size,
-        "reconstruction_mode": reconstruction_mode,
-        "score_mode": score_mode,
-        "postprocess_mode": postprocess_mode,
-        "completed_frames": 0,
-    }
-
-    # Build one frame for each requested rotation.
+    # Generate each requested frame and report the active frame number before work starts.
     for rotation_index in range(frame_count):
+        current_frame_number = rotation_index + 1
+
+        yield build_progress_update(
+            status="running",
+            stage_label=f"Generating frame {current_frame_number} of {frame_count}",
+            run_dir=run_dir,
+            config_snapshot_path=config_snapshot_path,
+            source_stats_csv=source_stats_csv,
+            frame_paths=frame_paths,
+            image_width=width,
+            image_height=height,
+            total_pixels=total_pixels,
+            unique_source_colors=len(color_freq),
+            frame_count=frame_count,
+            frame_timings_seconds=frame_timings,
+            total_runtime_seconds=time.perf_counter() - start_time,
+            palette_name=base_palette_data.get("name", "unnamed_palette"),
+            palette_size=palette_size,
+            reconstruction_mode=reconstruction_mode,
+            score_mode=score_mode,
+            postprocess_mode=postprocess_mode,
+            completed_frames=len(frame_paths),
+        )
+
         frame_start = time.perf_counter()
 
         frame_path = run_single_rotation(
@@ -458,32 +596,54 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
         frame_paths.append(frame_path)
         frame_timings.append(frame_duration)
 
-        yield {
-            "status": "running",
-            "run_dir": run_dir,
-            "config_snapshot_path": config_snapshot_path,
-            "source_stats_csv": source_stats_csv,
-            "frame_paths": list(frame_paths),
-            "gif_path": None,
-            "image_width": width,
-            "image_height": height,
-            "total_pixels": total_pixels,
-            "unique_source_colors": len(color_freq),
-            "frame_count": frame_count,
-            "frame_timings_seconds": list(frame_timings),
-            "total_runtime_seconds": time.perf_counter() - start_time,
-            "palette_name": base_palette_data.get("name", "unnamed_palette"),
-            "palette_size": palette_size,
-            "reconstruction_mode": reconstruction_mode,
-            "score_mode": score_mode,
-            "postprocess_mode": postprocess_mode,
-            "completed_frames": len(frame_paths),
-        }
+        yield build_progress_update(
+            status="running",
+            stage_label=f"Finished frame {current_frame_number} of {frame_count}",
+            run_dir=run_dir,
+            config_snapshot_path=config_snapshot_path,
+            source_stats_csv=source_stats_csv,
+            frame_paths=frame_paths,
+            image_width=width,
+            image_height=height,
+            total_pixels=total_pixels,
+            unique_source_colors=len(color_freq),
+            frame_count=frame_count,
+            frame_timings_seconds=frame_timings,
+            total_runtime_seconds=time.perf_counter() - start_time,
+            palette_name=base_palette_data.get("name", "unnamed_palette"),
+            palette_size=palette_size,
+            reconstruction_mode=reconstruction_mode,
+            score_mode=score_mode,
+            postprocess_mode=postprocess_mode,
+            completed_frames=len(frame_paths),
+        )
 
     gif_path: Path | None = None
 
     # Optional GIF creation after all frames are complete.
     if create_gif:
+        yield build_progress_update(
+            status="running",
+            stage_label="Generating GIF",
+            run_dir=run_dir,
+            config_snapshot_path=config_snapshot_path,
+            source_stats_csv=source_stats_csv,
+            frame_paths=frame_paths,
+            image_width=width,
+            image_height=height,
+            total_pixels=total_pixels,
+            unique_source_colors=len(color_freq),
+            frame_count=frame_count,
+            frame_timings_seconds=frame_timings,
+            total_runtime_seconds=time.perf_counter() - start_time,
+            palette_name=base_palette_data.get("name", "unnamed_palette"),
+            palette_size=palette_size,
+            reconstruction_mode=reconstruction_mode,
+            score_mode=score_mode,
+            postprocess_mode=postprocess_mode,
+            completed_frames=len(frame_paths),
+        )
+
         gif_path = run_dir / "gifs" / gif_output_name
         create_gif_from_frames(
             frame_paths=frame_paths,
@@ -494,27 +654,28 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     end_time = time.perf_counter()
     total_duration = end_time - start_time
 
-    yield {
-        "status": "completed",
-        "run_dir": run_dir,
-        "config_snapshot_path": config_snapshot_path,
-        "source_stats_csv": source_stats_csv,
-        "frame_paths": list(frame_paths),
-        "gif_path": gif_path,
-        "image_width": width,
-        "image_height": height,
-        "total_pixels": total_pixels,
-        "unique_source_colors": len(color_freq),
-        "frame_count": frame_count,
-        "frame_timings_seconds": list(frame_timings),
-        "total_runtime_seconds": total_duration,
-        "palette_name": base_palette_data.get("name", "unnamed_palette"),
-        "palette_size": palette_size,
-        "reconstruction_mode": reconstruction_mode,
-        "score_mode": score_mode,
-        "postprocess_mode": postprocess_mode,
-        "completed_frames": len(frame_paths),
-    }
+    yield build_progress_update(
+        status="completed",
+        stage_label="Completed",
+        run_dir=run_dir,
+        config_snapshot_path=config_snapshot_path,
+        source_stats_csv=source_stats_csv,
+        frame_paths=frame_paths,
+        gif_path=gif_path,
+        image_width=width,
+        image_height=height,
+        total_pixels=total_pixels,
+        unique_source_colors=len(color_freq),
+        frame_count=frame_count,
+        frame_timings_seconds=frame_timings,
+        total_runtime_seconds=total_duration,
+        palette_name=base_palette_data.get("name", "unnamed_palette"),
+        palette_size=palette_size,
+        reconstruction_mode=reconstruction_mode,
+        score_mode=score_mode,
+        postprocess_mode=postprocess_mode,
+        completed_frames=len(frame_paths),
+    )
 
 
 # ============================================================

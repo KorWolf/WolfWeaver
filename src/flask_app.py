@@ -508,6 +508,7 @@ def serialize_update(update: dict) -> dict:
 
     return {
         "status": update.get("status"),
+        "stage_label": update.get("stage_label", ""),
         "run_dir": str(update.get("run_dir", "")),
         "config_snapshot_path": str(update.get("config_snapshot_path", "")),
         "config_snapshot_url": config_snapshot_url,
@@ -555,9 +556,11 @@ def worker(job_id: str, config: dict) -> None:
             with jobs_lock:
                 jobs[job_id]["update"] = update
                 jobs[job_id]["status"] = update["status"]
+                jobs[job_id]["stage_label"] = update.get("stage_label", "")
     except Exception as error:
         with jobs_lock:
             jobs[job_id]["status"] = "failed"
+            jobs[job_id]["stage_label"] = "Run failed"
             jobs[job_id]["error"] = str(error)
 
 
@@ -577,6 +580,7 @@ def start_worker_if_queued(job_id: str) -> None:
             return
 
         job["status"] = "starting"
+        job["stage_label"] = "Launching background run"
         job_config = job["config"]
 
     # Start the background thread outside the lock.
@@ -631,6 +635,7 @@ def start_run():
         with jobs_lock:
             jobs[job_id] = {
                 "status": "queued",
+                "stage_label": "Waiting to begin",
                 "update": None,
                 "error": None,
                 "advisory": advisory,
@@ -728,6 +733,7 @@ def run_status(job_id: str):
     if job["status"] == "failed":
         return jsonify({
             "status": "failed",
+            "stage_label": job.get("stage_label", "Run failed"),
             "error": job["error"],
         })
 
@@ -735,6 +741,7 @@ def run_status(job_id: str):
     if update is None:
         return jsonify({
             "status": job["status"],
+            "stage_label": job.get("stage_label", ""),
             "completed_frames": 0,
             "frame_count": 0,
             "percent_complete": 0,

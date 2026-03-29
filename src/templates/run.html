@@ -20,6 +20,7 @@
             <h2>Status</h2>
             <p id="run-timer">Run timer: 0m 0.0s</p>
             <p id="run-status">Status: queued</p>
+            <p id="run-stage">Current step: Waiting to begin</p>
             <p id="run-frames">Frames completed: 0 / 0</p>
             <p id="first-frame-time">First frame time: waiting for first frame...</p>
             <p id="estimated-remaining">Estimated remaining: waiting for first frame...</p>
@@ -175,6 +176,7 @@
 
         const timerEl = document.getElementById("run-timer");
         const statusEl = document.getElementById("run-status");
+        const stageEl = document.getElementById("run-stage");
         const framesEl = document.getElementById("run-frames");
         const firstFrameTimeEl = document.getElementById("first-frame-time");
         const estimatedRemainingEl = document.getElementById("estimated-remaining");
@@ -390,6 +392,7 @@
 
             if (data.status === "failed") {
                 statusEl.textContent = `Status: failed - ${data.error}`;
+                stageEl.textContent = `Current step: ${data.stage_label || "Run failed"}`;
                 progressBarEl.style.width = "100%";
                 progressTextEl.textContent = "Failed";
                 stopClientTimer(0);
@@ -398,6 +401,7 @@
             }
 
             statusEl.textContent = `Status: ${data.status}`;
+            stageEl.textContent = `Current step: ${data.stage_label || "Working..."}`;
             framesEl.textContent = `Frames completed: ${data.completed_frames} / ${data.frame_count}`;
             progressBarEl.style.width = `${data.percent_complete}%`;
             progressTextEl.textContent = `${data.percent_complete}%`;
