@@ -7,7 +7,7 @@
 
     "save_debug_tables": false,
 
-    "create_gif": false,
+    "create_gif": true,
     "gif_frame_duration_ms": 120,
     "gif_output_name": "output.gif",
 

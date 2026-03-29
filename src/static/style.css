@@ -254,3 +254,9 @@ button,
     margin-bottom: 0.5rem;
     line-height: 1.4;
 }
+
+.reuse-note {
+    margin-top: 0.5rem;
+    color: green;
+    font-weight: 500;
+}

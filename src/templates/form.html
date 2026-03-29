@@ -39,6 +39,9 @@
         {% endif %}
 
         <form action="{{ url_for('start_run') }}" method="post" enctype="multipart/form-data" class="form-card">
+            <!-- Preserve a previously used source image path when reusing settings. -->
+            <input type="hidden" id="reuse_source_image" name="reuse_source_image" value="{{ values.reuse_source_image }}">
+
             <fieldset>
                 <legend>Source image</legend>
 
@@ -52,6 +55,12 @@
                 <p class="help-text">
                     Optional. If left empty, the default image from config file is used.
                 </p>
+
+                {% if values.reuse_source_image %}
+                    <p id="reuse-note" class="reuse-note">
+                        Reusing previous source image, upload new to replace.
+                    </p>
+                {% endif %}
             </fieldset>
 
             <fieldset>
@@ -296,40 +305,41 @@
             <div class="actions">
                 <button type="submit">Start run</button>
             </div>
-            <section class="tips-card">
-                <h2>Quick Tips</h2>
-
-                <ul class="tips-list">
-                    <li>
-                        <strong>Photorealistic images:</strong>
-                        Use perceptual_lab with clustered_main_balanced.
-                        Try 32-64 colors.
-                    </li>
-
-                    <li>
-                        <strong>Stylized / digital art:</strong>
-                        Use accent_aware with clustered_main_diverse.
-                        Lower palettes (16-48) often look cleaner.
-                    </li>
-
-                    <li>
-                        <strong>Limited color / pixel style:</strong>
-                        Use top_frequency.
-                        Keep palette small (8-24 colors).
-                    </li>
-
-                    <li>
-                        <strong>If colors look muddy:</strong>
-                        Increase palette size or try separation_aware.
-                    </li>
-
-                    <li>
-                        <strong>If edges look noisy:</strong>
-                        Try coherence_edge_aware.
-                    </li>
-                </ul>
-            </section>
         </form>
+
+        <section class="tips-card">
+            <h2>Quick Tips</h2>
+
+            <ul class="tips-list">
+                <li>
+                    <strong>Photorealistic images:</strong>
+                    Use perceptual_lab with clustered_main_balanced.
+                    Try 32-64 colors.
+                </li>
+
+                <li>
+                    <strong>Stylized / digital art:</strong>
+                    Use accent_aware with clustered_main_diverse.
+                    Lower palettes (16-48) often look cleaner.
+                </li>
+
+                <li>
+                    <strong>Limited color / pixel style:</strong>
+                    Use top_frequency.
+                    Keep palette small (8-24 colors).
+                </li>
+
+                <li>
+                    <strong>If colors look muddy:</strong>
+                    Increase palette size or try separation_aware.
+                </li>
+
+                <li>
+                    <strong>If edges look noisy:</strong>
+                    Try coherence_edge_aware.
+                </li>
+            </ul>
+        </section>
     </main>
 
     <script>
@@ -522,6 +532,30 @@
         syncPaletteSourceState();
         updateAdvisory();
         renderSwatches();
+
+        // ============================================================
+        // Reuse image handling
+        // ============================================================
+
+        const sourceImageInput = document.getElementById("source_image");
+        const reuseNote = document.getElementById("reuse-note");
+        const reuseInput = document.getElementById("reuse_source_image");
+
+        if (sourceImageInput) {
+            sourceImageInput.addEventListener("change", () => {
+                if (sourceImageInput.files && sourceImageInput.files.length > 0) {
+                    // Hide the reuse message
+                    if (reuseNote) {
+                        reuseNote.style.display = "none";
+                    }
+
+                    // Clear the reuse path so backend does not use it
+                    if (reuseInput) {
+                        reuseInput.value = "";
+                    }
+                }
+            });
+        }
     </script>
 </body>
 </html>

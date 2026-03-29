@@ -74,6 +74,7 @@ def build_default_form_values() -> dict:
         "frame_prefix": str(defaults["frame_prefix"]),
         "gif_output_name": str(defaults["gif_output_name"]),
         "selected_preset": "",
+        "reuse_source_image": "",
     }
 
 
@@ -164,6 +165,45 @@ def build_postprocess_mode_options() -> list[dict]:
     ]
 
 
+def build_form_values_from_run_settings(settings: dict) -> dict:
+    """
+    Build form values from a saved run settings snapshot.
+
+    This is used by the "Use these settings" workflow so the user can
+    return to the form with prior settings already filled in.
+    """
+    values = build_default_form_values()
+
+    palette_colors = settings.get("palette_colors")
+    palette_text = values["palette_text"]
+
+    # For manual palettes, restore the actual palette text used in the run.
+    if isinstance(palette_colors, list) and len(palette_colors) > 0:
+        palette_text = "\n".join(str(color).upper() for color in palette_colors)
+
+    values.update(
+        {
+            "palette_source": str(settings.get("palette_source", values["palette_source"])),
+            "image_palette_method": str(settings.get("image_palette_method") or values["image_palette_method"]),
+            "image_palette_count": int(settings.get("image_palette_count") or values["image_palette_count"]),
+            "frame_count": int(settings.get("frame_count", values["frame_count"])),
+            "reconstruction_mode": str(settings.get("reconstruction_mode", values["reconstruction_mode"])),
+            "score_mode": str(settings.get("score_mode", values["score_mode"])),
+            "postprocess_mode": str(settings.get("postprocess_mode", values["postprocess_mode"])),
+            "random_seed": int(settings.get("random_seed", values["random_seed"])),
+            "create_gif": bool(settings.get("create_gif", values["create_gif"])),
+            "gif_frame_duration_ms": int(settings.get("gif_frame_duration_ms", values["gif_frame_duration_ms"])),
+            "palette_text": palette_text,
+            "frame_prefix": str(settings.get("frame_prefix", values["frame_prefix"])),
+            "gif_output_name": str(settings.get("gif_output_name", values["gif_output_name"])),
+            "selected_preset": str(settings.get("selected_preset") or ""),
+            "reuse_source_image": str(settings.get("source_image") or ""),
+        }
+    )
+
+    return values
+
+
 # ============================================================
 # Input parsing and validation
 # ============================================================
@@ -252,6 +292,32 @@ def validate_image_upload(file_storage) -> Path | None:
     return saved_path
 
 
+def validate_reuse_source_image_path(path_text: str) -> Path | None:
+    """
+    Validate a previously used local source image path.
+
+    This is only used when the user chooses "Use these settings" and does
+    not upload a new file on the form.
+    """
+    normalized = path_text.strip()
+
+    if not normalized:
+        return None
+
+    source_path = Path(normalized)
+
+    if not source_path.exists():
+        raise ValueError("The previously used source image could not be found.")
+
+    if not source_path.is_file():
+        raise ValueError("The previously used source image path is not a file.")
+
+    if source_path.suffix.lower() not in ALLOWED_IMAGE_EXTENSIONS:
+        raise ValueError("The previously used source image has an unsupported file type.")
+
+    return source_path
+
+
 # ============================================================
 # Display / formatting helpers
 # ============================================================
@@ -335,6 +401,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
             str(defaults["gif_output_name"]),
         ),
         "selected_preset": request.form.get("selected_preset", ""),
+        "reuse_source_image": request.form.get("reuse_source_image", ""),
     }
 
     palette_source = form_values["palette_source"]
@@ -385,7 +452,16 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         gif_output_name = f"{gif_output_name}.gif"
 
     uploaded_image_path = validate_image_upload(request.files.get("source_image"))
-    source_image = uploaded_image_path if uploaded_image_path else Path(defaults["source_image"])
+    reused_image_path = validate_reuse_source_image_path(form_values["reuse_source_image"])
+
+    # Prefer a newly uploaded image first, then a reused source path,
+    # then the default config image.
+    if uploaded_image_path is not None:
+        source_image = uploaded_image_path
+    elif reused_image_path is not None:
+        source_image = reused_image_path
+    else:
+        source_image = Path(defaults["source_image"])
 
     if not source_image.exists():
         raise ValueError("No valid source image was provided, and the default image was not found.")
@@ -620,6 +696,61 @@ def form_page():
     )
 
 
+@app.route("/reuse-run/<job_id>", methods=["GET"])
+def reuse_run_settings(job_id: str):
+    """
+    Render the main form page using the saved settings from a prior run.
+
+    This lets the user tweak a prior run configuration without starting
+    the run automatically.
+    """
+    with jobs_lock:
+        job = jobs.get(job_id)
+
+    if job is None:
+        return "Run not found.", 404
+
+    settings = None
+    update = job.get("update")
+
+    if update is not None:
+        settings = load_run_settings_from_snapshot(update.get("config_snapshot_path"))
+
+    # Fall back to the in-memory config if the snapshot is not available yet.
+    if settings is None:
+        settings = job.get("config")
+
+    if settings is None:
+        return "Run settings could not be loaded.", 404
+
+    form_values = build_form_values_from_run_settings(settings)
+
+    try:
+        if form_values["palette_source"] == "manual":
+            palette_size = len(parse_palette_text(form_values["palette_text"]))
+        else:
+            palette_size = int(form_values["image_palette_count"])
+
+        advisory = build_frame_count_message(
+            frame_count=int(form_values["frame_count"]),
+            palette_size=palette_size,
+        )
+    except Exception:
+        advisory = None
+
+    return render_template(
+        "form.html",
+        error=None,
+        advisory=advisory,
+        values=form_values,
+        palette_presets=PALETTE_PRESETS,
+        palette_preset_options=build_palette_preset_display_options(),
+        reconstruction_modes=RECONSTRUCTION_MODES,
+        score_mode_options=build_score_mode_options(),
+        postprocess_mode_options=build_postprocess_mode_options(),
+    )
+
+
 @app.route("/start", methods=["POST"])
 def start_run():
     """
@@ -668,6 +799,7 @@ def start_run():
             "frame_prefix": request.form.get("frame_prefix", defaults["frame_prefix"]),
             "gif_output_name": request.form.get("gif_output_name", defaults["gif_output_name"]),
             "selected_preset": request.form.get("selected_preset", ""),
+            "reuse_source_image": request.form.get("reuse_source_image", ""),
         }
 
         try:
