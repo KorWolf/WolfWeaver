@@ -107,6 +107,18 @@ http://127.0.0.1:5000
    * from current settings and image
    * from default
 
+## Reusing settings
+
+After a run completes, you can click “Use these settings” to load the same configuration back into the form.
+
+This lets you:
+
+* tweak a single setting
+* rerun quickly
+* iterate without re-entering everything
+
+If no new image is uploaded, the previous image will be reused automatically.
+
 ---
 
 ## Reconstruction modes
@@ -129,6 +141,18 @@ Each mode changes how colors are distributed across the image:
 * Fully random each run
 * Good for experimentation
 
+### Checker (seeded)
+
+* Places colors in a checker-like distribution pattern
+* Still influenced by randomness, but with structure
+* Can produce more evenly spread results than pure random
+
+### Block (seeded)
+
+* Groups pixels into local regions (“blocks”)
+* Colors tend to stay clustered instead of scattered
+* Produces more painterly or patch-like results
+
 ### Weighted random
 
 * Random placement with bias toward closer color matches
@@ -142,25 +166,35 @@ Score modes control how source colors are matched to palette colors.
 
 This has a big impact on how colors shift during reconstruction.
 
-### Basic / Weighted RGB
+### Basic RGB / S / L
 
-* Uses RGB difference with some light weighting
-* Fast and predictable
+* Baseline scoring mode
+* Compares RGB values along with saturation and lightness
+* Good general-purpose starting point
+
+### Weighted RGB / S / L
+
+* Similar to the basic mode, but with stronger weighting
+* Gives more influence to some differences than the baseline mode
+* Useful when the basic mode feels a little too loose
 
 ### Accent aware
 
-* Protects strong colors (eyes, highlights, accents)
-* Helps prevent vivid details from being washed out
+* Helps protect stronger accent colors
+* Useful for things like eyes, highlights, small colored details, or stylized features
+* Can help keep vivid details from getting washed out
 
 ### Separation aware
 
 * Pushes similar colors apart more aggressively
 * Helps avoid color blending (especially skin/hair/clothing overlap)
+* Can help with images where skin, hair, fabric, or background colors start collapsing into each other
 
 ### Perceptual Lab
 
 * Uses perceptual color distance instead of raw RGB
 * Often produces more natural-looking matches
+* A strong choice for more realistic or painterly images
 
 ---
 
@@ -217,6 +251,27 @@ These modes try to help clean up noise and improve visual cohesion (not well cal
 
 * Smooths noise while preserving strong edges
 * Helps keep shapes and outlines clearer
+
+---
+
+## Run experience
+
+While a run is processing, the UI shows:
+
+* current stage of the pipeline
+* frame progress
+* runtime timer
+* estimated remaining time (after first frame)
+
+The pipeline is intentionally transparent so you can see what it is doing rather than just waiting on a blank screen.
+
+---
+
+## Tips
+
+The UI includes a quick tips section with suggested settings for different image types.
+
+More detailed examples will be added over time and a deep dive page is planned for the future.
 
 ---
 
