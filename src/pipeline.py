@@ -27,6 +27,11 @@ from src.palette import (
     load_palette_from_json,
     rotate_palette_colors,
 )
+from src.palette_source import (
+    extract_clustered_main_palette_colors,
+    extract_top_frequency_low_variety_palette_colors,
+    extract_top_image_palette_colors,
+)
 from src.postprocess import apply_postprocess
 from src.reconstruct import reconstruct_image_from_assignments, save_image_array
 from src.run_manager import (
@@ -41,8 +46,101 @@ from src.run_manager import (
 # ============================================================
 # A run can get its palette from either:
 # - palette_colors already present in runtime config
+# - image-derived palette settings
 # - palette_file on disk
 # ============================================================
+
+def build_image_derived_palette_data(config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Build palette data from image-derived palette settings.
+
+    This work is intentionally done inside the pipeline so Flask can
+    redirect to the run page before heavier palette extraction begins.
+    """
+    image_path = Path(config["source_image"])
+    image_palette_method = str(config.get("image_palette_method"))
+    image_palette_count = int(config.get("image_palette_count"))
+    random_seed = int(config["random_seed"])
+
+    if not image_path.exists():
+        raise FileNotFoundError(f"Source image not found: {image_path}")
+
+    if image_palette_method == "clustered_main_nearest":
+        palette_colors = extract_clustered_main_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+            preserve_darkest=True,
+            preserve_lightest=True,
+            min_color_distance=28.0,
+            random_seed=random_seed,
+            representative_mode="nearest_real",
+            selection_mode="standard",
+        )
+    elif image_palette_method == "clustered_main_frequency":
+        palette_colors = extract_clustered_main_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+            preserve_darkest=True,
+            preserve_lightest=True,
+            min_color_distance=28.0,
+            random_seed=random_seed,
+            representative_mode="most_frequent_real",
+            selection_mode="standard",
+        )
+    elif image_palette_method == "clustered_main_balanced":
+        palette_colors = extract_clustered_main_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+            preserve_darkest=True,
+            preserve_lightest=True,
+            min_color_distance=28.0,
+            random_seed=random_seed,
+            representative_mode="most_frequent_real",
+            selection_mode="balanced",
+        )
+    elif image_palette_method == "clustered_main_diverse":
+        palette_colors = extract_clustered_main_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+            preserve_darkest=True,
+            preserve_lightest=True,
+            min_color_distance=28.0,
+            random_seed=random_seed,
+            representative_mode="most_frequent_real",
+            selection_mode="diverse",
+        )
+    elif image_palette_method == "clustered_main_low_variety":
+        palette_colors = extract_clustered_main_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+            preserve_darkest=True,
+            preserve_lightest=True,
+            min_color_distance=32.0,
+            random_seed=random_seed,
+            representative_mode="most_frequent_real",
+            selection_mode="low_variety",
+        )
+    elif image_palette_method == "top_frequency_low_variety":
+        palette_colors = extract_top_frequency_low_variety_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+            preserve_darkest=True,
+            preserve_lightest=True,
+            min_color_distance=26.0,
+        )
+    elif image_palette_method == "top_frequency":
+        palette_colors = extract_top_image_palette_colors(
+            image_path=image_path,
+            color_count=image_palette_count,
+        )
+    else:
+        raise ValueError(f"Unsupported image-derived palette method: {image_palette_method}")
+
+    return {
+        "name": f"image_{image_palette_method}_{len(palette_colors)}",
+        "colors": palette_colors,
+    }
+
 
 def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
     """
@@ -50,9 +148,11 @@ def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
 
     Priority:
     1. Use palette_colors directly if present in config
-    2. Otherwise load palette JSON from palette_file
+    2. Build image-derived palette if requested
+    3. Otherwise load palette JSON from palette_file
     """
     palette_colors = config.get("palette_colors")
+    palette_source = str(config.get("palette_source", "manual"))
 
     if palette_colors is not None:
         if not isinstance(palette_colors, list) or len(palette_colors) == 0:
@@ -62,6 +162,9 @@ def resolve_palette_data(config: dict[str, Any]) -> dict[str, Any]:
             "name": config.get("palette_name", "ui_palette"),
             "colors": palette_colors,
         }
+
+    if palette_source == "image":
+        return build_image_derived_palette_data(config)
 
     palette_path = Path(config["palette_file"])
     if not palette_path.exists():
@@ -82,6 +185,7 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
     gif_frame_duration_ms = int(config["gif_frame_duration_ms"])
     random_seed = int(config["random_seed"])
     postprocess_mode = str(config.get("postprocess_mode", "none"))
+    palette_source = str(config.get("palette_source", "manual"))
 
     if frame_count < 1:
         raise ValueError("frame_count must be at least 1.")
@@ -97,6 +201,29 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
             "postprocess_mode must be one of: "
             "none, coherence_basic, coherence_edge_aware."
         )
+
+    if palette_source not in {"manual", "image"}:
+        raise ValueError("palette_source must be either 'manual' or 'image'.")
+
+    if palette_source == "image":
+        image_palette_method = str(config.get("image_palette_method"))
+        image_palette_count = config.get("image_palette_count")
+
+        valid_image_methods = {
+            "clustered_main_nearest",
+            "clustered_main_frequency",
+            "clustered_main_balanced",
+            "clustered_main_diverse",
+            "clustered_main_low_variety",
+            "top_frequency",
+            "top_frequency_low_variety",
+        }
+
+        if image_palette_method not in valid_image_methods:
+            raise ValueError("Invalid image_palette_method for image-derived palette.")
+
+        if image_palette_count is None or int(image_palette_count) < 1:
+            raise ValueError("image_palette_count must be at least 1 for image-derived palette.")
 
 
 # ============================================================
@@ -248,12 +375,20 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     if not image_path.exists():
         raise FileNotFoundError(f"Source image not found: {image_path}")
 
+    # Resolve palette data inside the worker so heavier image-derived
+    # palette methods do not block the Flask request path.
+    base_palette_data = resolve_palette_data(config)
+
+    # Update config before snapshot so the saved settings show the actual
+    # palette colors and final palette name used for the run.
+    config["palette_colors"] = list(base_palette_data["colors"])
+    config["palette_name"] = str(base_palette_data.get("name", "unnamed_palette"))
+
     # Prepare run output folders and save a config snapshot for traceability.
     run_dir = create_run_directory()
     run_subdirs = create_run_subdirectories(run_dir)
     config_snapshot_path = save_config_snapshot(config, run_dir)
 
-    base_palette_data = resolve_palette_data(config)
     palette_size = len(base_palette_data["colors"])
 
     # Load source image and derive basic image stats.

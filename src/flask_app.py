@@ -11,11 +11,6 @@ from werkzeug.utils import secure_filename
 from src.config_loader import load_config
 from src.palette import load_palette_from_json
 from src.palette_presets import PALETTE_PRESETS
-from src.palette_source import (
-    extract_clustered_main_palette_colors,
-    extract_top_frequency_low_variety_palette_colors,
-    extract_top_image_palette_colors,
-)
 from src.pipeline import run_pipeline_stream
 from src.reconstruction_modes import RECONSTRUCTION_MODES, get_reconstruction_mode_values
 from src.score_modes import get_score_mode_values
@@ -308,6 +303,11 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     """
     defaults = load_config(Path("config.json"))
 
+    # Only load the default palette text if the form did not submit one.
+    submitted_palette_text = request.form.get("palette_text")
+    if submitted_palette_text is None:
+        submitted_palette_text = load_default_palette_text()
+
     form_values = {
         "palette_source": request.form.get("palette_source", "manual"),
         "image_palette_method": request.form.get("image_palette_method", "clustered_main_nearest"),
@@ -328,7 +328,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
             "gif_frame_duration_ms",
             str(defaults["gif_frame_duration_ms"]),
         ),
-        "palette_text": request.form.get("palette_text", load_default_palette_text()),
+        "palette_text": submitted_palette_text,
         "frame_prefix": request.form.get("frame_prefix", str(defaults["frame_prefix"])),
         "gif_output_name": request.form.get(
             "gif_output_name",
@@ -390,85 +390,18 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     if not source_image.exists():
         raise ValueError("No valid source image was provided, and the default image was not found.")
 
+    palette_colors = None
+    palette_name = None
+
     if palette_source == "manual":
+        # Manual palettes are still parsed immediately because this is cheap.
         palette_colors = parse_palette_text(form_values["palette_text"])
         palette_name = form_values["selected_preset"] or "web_palette"
+        palette_size = len(palette_colors)
     else:
-        source_image_path = Path(source_image)
-
-        if image_palette_method == "clustered_main_nearest":
-            palette_colors = extract_clustered_main_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-                preserve_darkest=True,
-                preserve_lightest=True,
-                min_color_distance=28.0,
-                random_seed=random_seed,
-                representative_mode="nearest_real",
-                selection_mode="standard",
-            )
-        elif image_palette_method == "clustered_main_frequency":
-            palette_colors = extract_clustered_main_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-                preserve_darkest=True,
-                preserve_lightest=True,
-                min_color_distance=28.0,
-                random_seed=random_seed,
-                representative_mode="most_frequent_real",
-                selection_mode="standard",
-            )
-        elif image_palette_method == "clustered_main_balanced":
-            palette_colors = extract_clustered_main_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-                preserve_darkest=True,
-                preserve_lightest=True,
-                min_color_distance=28.0,
-                random_seed=random_seed,
-                representative_mode="most_frequent_real",
-                selection_mode="balanced",
-            )
-        elif image_palette_method == "clustered_main_diverse":
-            palette_colors = extract_clustered_main_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-                preserve_darkest=True,
-                preserve_lightest=True,
-                min_color_distance=28.0,
-                random_seed=random_seed,
-                representative_mode="most_frequent_real",
-                selection_mode="diverse",
-            )
-        elif image_palette_method == "clustered_main_low_variety":
-            palette_colors = extract_clustered_main_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-                preserve_darkest=True,
-                preserve_lightest=True,
-                min_color_distance=32.0,
-                random_seed=random_seed,
-                representative_mode="most_frequent_real",
-                selection_mode="low_variety",
-            )
-        elif image_palette_method == "top_frequency_low_variety":
-            palette_colors = extract_top_frequency_low_variety_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-                preserve_darkest=True,
-                preserve_lightest=True,
-                min_color_distance=26.0,
-            )
-        else:
-            palette_colors = extract_top_image_palette_colors(
-                image_path=source_image_path,
-                color_count=image_palette_count,
-            )
-
-        palette_name = f"image_{image_palette_method}_{len(palette_colors)}"
-        form_values["palette_text"] = "\n".join(palette_colors)
-
-    palette_size = len(palette_colors)
+        # Image-derived palette extraction is intentionally deferred to the
+        # background pipeline so the run page can load faster.
+        palette_size = image_palette_count
 
     # Store all run settings needed for reproducibility.
     config = {
@@ -628,6 +561,29 @@ def worker(job_id: str, config: dict) -> None:
             jobs[job_id]["error"] = str(error)
 
 
+def start_worker_if_queued(job_id: str) -> None:
+    """
+    Start the worker thread only once, and only if the job is still queued.
+
+    This lets the run page load first before heavy processing starts.
+    """
+    with jobs_lock:
+        job = jobs.get(job_id)
+
+        if job is None:
+            return
+
+        if job["status"] != "queued":
+            return
+
+        job["status"] = "starting"
+        job_config = job["config"]
+
+    # Start the background thread outside the lock.
+    thread = threading.Thread(target=worker, args=(job_id, job_config), daemon=True)
+    thread.start()
+
+
 # ============================================================
 # Routes
 # ============================================================
@@ -663,7 +619,10 @@ def form_page():
 @app.route("/start", methods=["POST"])
 def start_run():
     """
-    Validate input, create a background job, and redirect to the run page.
+    Validate input, create a queued job, and redirect to the run page.
+
+    The worker is intentionally not started here so the browser can load
+    the run page first.
     """
     try:
         config, form_values, advisory = build_config_from_request()
@@ -675,10 +634,8 @@ def start_run():
                 "update": None,
                 "error": None,
                 "advisory": advisory,
+                "config": config,
             }
-
-        thread = threading.Thread(target=worker, args=(job_id, config), daemon=True)
-        thread.start()
 
         return redirect(url_for("run_page", job_id=job_id))
 
@@ -756,7 +713,12 @@ def run_page(job_id: str):
 def run_status(job_id: str):
     """
     Return live JSON progress data for a run.
+
+    If the job is still queued, start the worker here so the run page can
+    appear before heavy processing begins.
     """
+    start_worker_if_queued(job_id)
+
     with jobs_lock:
         job = jobs.get(job_id)
 
@@ -772,7 +734,7 @@ def run_status(job_id: str):
     update = job.get("update")
     if update is None:
         return jsonify({
-            "status": "queued",
+            "status": job["status"],
             "completed_frames": 0,
             "frame_count": 0,
             "percent_complete": 0,
