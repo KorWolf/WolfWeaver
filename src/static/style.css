@@ -233,3 +233,24 @@ button,
     background: var(--bg-soft);
     font-size: 0.95rem;
 }
+
+.tips-card {
+    margin-top: 2rem;
+    padding: 1rem;
+    border: 1px solid #444;
+    border-radius: 8px;
+    background-color: #1e1e1e;
+}
+
+.tips-card h2 {
+    margin-top: 0;
+}
+
+.tips-list {
+    padding-left: 1.25rem;
+}
+
+.tips-list li {
+    margin-bottom: 0.5rem;
+    line-height: 1.4;
+}
