@@ -71,6 +71,10 @@
                     <dd id="summary-score-mode"></dd>
                 </div>
                 <div>
+                    <dt>Postprocess mode</dt>
+                    <dd id="summary-postprocess-mode"></dd>
+                </div>
+                <div>
                     <dt>Frames generated</dt>
                     <dd id="summary-frame-count"></dd>
                 </div>
@@ -119,6 +123,10 @@
                 <div>
                     <dt>Score mode</dt>
                     <dd id="settings-score-mode"></dd>
+                </div>
+                <div>
+                    <dt>Postprocess mode</dt>
+                    <dd id="settings-postprocess-mode"></dd>
                 </div>
                 <div>
                     <dt>Random seed</dt>
@@ -306,6 +314,7 @@
             document.getElementById("summary-palette-size").textContent = data.palette_size;
             document.getElementById("summary-mode").textContent = data.reconstruction_mode;
             document.getElementById("summary-score-mode").textContent = formatNullable(data.score_mode);
+            document.getElementById("summary-postprocess-mode").textContent = formatNullable(data.postprocess_mode);
             document.getElementById("summary-frame-count").textContent = data.frame_count;
             document.getElementById("summary-runtime").textContent = data.runtime_text;
 
@@ -338,6 +347,7 @@
             document.getElementById("settings-frame-count").textContent = formatNullable(settings.frame_count);
             document.getElementById("settings-reconstruction-mode").textContent = formatNullable(settings.reconstruction_mode);
             document.getElementById("settings-score-mode").textContent = formatNullable(settings.score_mode);
+            document.getElementById("settings-postprocess-mode").textContent = formatNullable(settings.postprocess_mode);
             document.getElementById("settings-random-seed").textContent = formatNullable(settings.random_seed);
             document.getElementById("settings-create-gif").textContent = formatBool(Boolean(settings.create_gif));
             document.getElementById("settings-gif-frame-duration").textContent = formatNullable(settings.gif_frame_duration_ms);

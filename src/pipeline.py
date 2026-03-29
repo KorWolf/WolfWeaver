@@ -27,6 +27,7 @@ from src.palette import (
     load_palette_from_json,
     rotate_palette_colors,
 )
+from src.postprocess import apply_postprocess
 from src.reconstruct import reconstruct_image_from_assignments, save_image_array
 from src.run_manager import (
     create_run_directory,
@@ -80,6 +81,7 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
     frame_count = int(config["frame_count"])
     gif_frame_duration_ms = int(config["gif_frame_duration_ms"])
     random_seed = int(config["random_seed"])
+    postprocess_mode = str(config.get("postprocess_mode", "none"))
 
     if frame_count < 1:
         raise ValueError("frame_count must be at least 1.")
@@ -89,6 +91,12 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
 
     if random_seed < 0:
         raise ValueError("random_seed must be 0 or greater.")
+
+    if postprocess_mode not in {"none", "coherence_basic", "coherence_edge_aware"}:
+        raise ValueError(
+            "postprocess_mode must be one of: "
+            "none, coherence_basic, coherence_edge_aware."
+        )
 
 
 # ============================================================
@@ -100,6 +108,7 @@ def validate_runtime_config(config: dict[str, Any]) -> None:
 # - calculate source/replacement differences
 # - build the assignment table
 # - reconstruct the image using the selected reconstruction mode
+# - optionally apply post-processing
 # - save one frame
 # ============================================================
 
@@ -112,6 +121,7 @@ def run_single_rotation(
     frame_prefix: str,
     reconstruction_mode: str,
     score_mode: str,
+    postprocess_mode: str,
     random_seed: int,
     run_subdirs: dict[str, Path],
     save_debug_tables: bool = False,
@@ -175,6 +185,14 @@ def run_single_rotation(
         random_seed=random_seed + rotation_index,
     )
 
+    # Apply optional post-processing after reconstruction.
+    output_image_array = apply_postprocess(
+        source_image_array=image_array,
+        reconstructed_image_array=output_image_array,
+        palette_colors=rotated_palette_data["colors"],
+        postprocess_mode=postprocess_mode,
+    )
+
     frame_path = run_subdirs["frames"] / f"{frame_prefix}_{rotation_index:03d}.png"
     save_image_array(output_image_array, frame_path)
 
@@ -224,6 +242,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
     frame_prefix = str(config["frame_prefix"])
     reconstruction_mode = str(config["reconstruction_mode"])
     score_mode = str(config.get("score_mode", "basic_rgb_sl"))
+    postprocess_mode = str(config.get("postprocess_mode", "none"))
     random_seed = int(config["random_seed"])
 
     if not image_path.exists():
@@ -275,6 +294,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
         "palette_size": palette_size,
         "reconstruction_mode": reconstruction_mode,
         "score_mode": score_mode,
+        "postprocess_mode": postprocess_mode,
         "completed_frames": 0,
     }
 
@@ -291,6 +311,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
             frame_prefix=frame_prefix,
             reconstruction_mode=reconstruction_mode,
             score_mode=score_mode,
+            postprocess_mode=postprocess_mode,
             random_seed=random_seed,
             run_subdirs=run_subdirs,
             save_debug_tables=save_debug_tables,
@@ -320,6 +341,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
             "palette_size": palette_size,
             "reconstruction_mode": reconstruction_mode,
             "score_mode": score_mode,
+            "postprocess_mode": postprocess_mode,
             "completed_frames": len(frame_paths),
         }
 
@@ -355,6 +377,7 @@ def run_pipeline_stream(config: dict[str, Any]) -> Generator[dict[str, Any], Non
         "palette_size": palette_size,
         "reconstruction_mode": reconstruction_mode,
         "score_mode": score_mode,
+        "postprocess_mode": postprocess_mode,
         "completed_frames": len(frame_paths),
     }
 

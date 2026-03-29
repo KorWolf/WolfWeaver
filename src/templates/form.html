@@ -201,6 +201,23 @@
                     </div>
 
                     <div class="field">
+                        <label for="postprocess_mode">Postprocess mode</label>
+                        <select id="postprocess_mode" name="postprocess_mode" required>
+                            {% for mode in postprocess_mode_options %}
+                                <option
+                                    value="{{ mode.value }}"
+                                    {% if values.postprocess_mode == mode.value %}selected{% endif %}
+                                >
+                                    {{ mode.label }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                        <div id="postprocess-mode-description" class="setting-description" aria-live="polite"></div>
+                    </div>
+                </div>
+
+                <div class="field-row">
+                    <div class="field">
                         <label for="random_seed">Random seed</label>
                         <input
                             id="random_seed"
@@ -215,9 +232,7 @@
                             Used by seeded random modes. The same seed gives the same result.
                         </p>
                     </div>
-                </div>
 
-                <div class="field-row">
                     <div class="field checkbox-field">
                         <input
                             id="create_gif"
@@ -227,7 +242,9 @@
                         >
                         <label for="create_gif">Create GIF</label>
                     </div>
+                </div>
 
+                <div class="field-row">
                     <div class="field">
                         <label for="gif_frame_duration_ms">GIF frame duration (ms)</label>
                         <input
@@ -243,9 +260,7 @@
                             Lower values make the GIF play faster. This does not change render time.
                         </p>
                     </div>
-                </div>
 
-                <div class="field-row">
                     <div class="field">
                         <label for="frame_prefix">Frame filename prefix</label>
                         <input
@@ -259,7 +274,9 @@
                             Used when naming the saved frame image files.
                         </p>
                     </div>
+                </div>
 
+                <div class="field-row">
                     <div class="field">
                         <label for="gif_output_name">GIF filename</label>
                         <input
@@ -287,6 +304,7 @@
         const imagePaletteMethodField = document.getElementById("image_palette_method");
         const modeField = document.getElementById("reconstruction_mode");
         const scoreModeField = document.getElementById("score_mode");
+        const postprocessModeField = document.getElementById("postprocess_mode");
         const seedField = document.getElementById("random_seed");
         const frameCountField = document.getElementById("frame_count");
         const paletteField = document.getElementById("palette_text");
@@ -294,6 +312,7 @@
         const swatchGrid = document.getElementById("palette-swatch-grid");
         const modeDescription = document.getElementById("mode-description");
         const scoreModeDescription = document.getElementById("score-mode-description");
+        const postprocessModeDescription = document.getElementById("postprocess-mode-description");
 
         const manualPaletteControls = document.getElementById("manual-palette-controls");
         const imagePaletteControls = document.getElementById("image-palette-controls");
@@ -305,6 +324,7 @@
         const palettePresets = {{ palette_presets|tojson|safe }};
         const reconstructionModes = {{ reconstruction_modes|tojson|safe }};
         const scoreModeOptions = {{ score_mode_options|tojson|safe }};
+        const postprocessModeOptions = {{ postprocess_mode_options|tojson|safe }};
 
         function getSelectedModeConfig() {
             return reconstructionModes.find(mode => mode.value === modeField.value) || null;
@@ -312,6 +332,10 @@
 
         function getSelectedScoreModeConfig() {
             return scoreModeOptions.find(mode => mode.value === scoreModeField.value) || null;
+        }
+
+        function getSelectedPostprocessModeConfig() {
+            return postprocessModeOptions.find(mode => mode.value === postprocessModeField.value) || null;
         }
 
         function syncSeedState() {
@@ -328,6 +352,11 @@
         function updateScoreModeDescription() {
             const selectedMode = getSelectedScoreModeConfig();
             scoreModeDescription.textContent = selectedMode ? selectedMode.description : "";
+        }
+
+        function updatePostprocessModeDescription() {
+            const selectedMode = getSelectedPostprocessModeConfig();
+            postprocessModeDescription.textContent = selectedMode ? selectedMode.description : "";
         }
 
         function syncPaletteSourceState() {
@@ -434,6 +463,10 @@
             updateScoreModeDescription();
         });
 
+        postprocessModeField.addEventListener("change", () => {
+            updatePostprocessModeDescription();
+        });
+
         paletteSourceField.addEventListener("change", () => {
             syncPaletteSourceState();
             updateAdvisory();
@@ -452,6 +485,7 @@
         syncSeedState();
         updateModeDescription();
         updateScoreModeDescription();
+        updatePostprocessModeDescription();
         syncPaletteSourceState();
         updateAdvisory();
         renderSwatches();

@@ -37,6 +37,10 @@ def load_config(config_path: Path) -> dict:
     if missing_keys:
         raise ValueError(f"Config file is missing required keys: {missing_keys}")
 
+    # Default the new postprocess setting for older config files.
+    if "postprocess_mode" not in config:
+        config["postprocess_mode"] = "none"
+
     # Validate reconstruction mode against the central registry.
     valid_reconstruction_modes = get_reconstruction_mode_values()
     if config["reconstruction_mode"] not in valid_reconstruction_modes:
@@ -51,6 +55,14 @@ def load_config(config_path: Path) -> dict:
         raise ValueError(
             f"Invalid score_mode: {config['score_mode']}. "
             f"Valid options: {valid_score_modes}"
+        )
+
+    # Validate postprocess mode.
+    valid_postprocess_modes = {"none", "coherence_basic", "coherence_edge_aware"}
+    if config["postprocess_mode"] not in valid_postprocess_modes:
+        raise ValueError(
+            f"Invalid postprocess_mode: {config['postprocess_mode']}. "
+            f"Valid options: {sorted(valid_postprocess_modes)}"
         )
 
     return config

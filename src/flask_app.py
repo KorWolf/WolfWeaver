@@ -71,6 +71,7 @@ def build_default_form_values() -> dict:
         "frame_count": int(defaults["frame_count"]),
         "reconstruction_mode": str(defaults["reconstruction_mode"]),
         "score_mode": str(defaults["score_mode"]),
+        "postprocess_mode": str(defaults.get("postprocess_mode", "none")),
         "random_seed": int(defaults["random_seed"]),
         "create_gif": bool(defaults["create_gif"]),
         "gif_frame_duration_ms": int(defaults["gif_frame_duration_ms"]),
@@ -141,6 +142,29 @@ def build_score_mode_options() -> list[dict]:
             "value": "perceptual_lab",
             "label": "Perceptual Lab",
             "description": "Uses perceptual Lab color distance as the main matching term, which is generally closer to how people see color differences than raw RGB.",
+        },
+    ]
+
+
+def build_postprocess_mode_options() -> list[dict]:
+    """
+    Build display labels and descriptions for postprocess modes shown in the UI.
+    """
+    return [
+        {
+            "value": "none",
+            "label": "None",
+            "description": "No post-processing. Keeps the raw reconstruction output exactly as assigned.",
+        },
+        {
+            "value": "coherence_basic",
+            "label": "Coherence basic",
+            "description": "Uses neighbor agreement to smooth isolated noise and improve local region coherence.",
+        },
+        {
+            "value": "coherence_edge_aware",
+            "label": "Coherence edge aware",
+            "description": "Uses neighbor agreement while protecting stronger source-image edges so shapes stay clearer.",
         },
     ]
 
@@ -294,6 +318,10 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
             str(defaults["reconstruction_mode"]),
         ),
         "score_mode": request.form.get("score_mode", str(defaults["score_mode"])),
+        "postprocess_mode": request.form.get(
+            "postprocess_mode",
+            str(defaults.get("postprocess_mode", "none")),
+        ),
         "random_seed": request.form.get("random_seed", str(defaults["random_seed"])),
         "create_gif": "create_gif" in request.form,
         "gif_frame_duration_ms": request.form.get(
@@ -345,6 +373,10 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
     score_mode = form_values["score_mode"]
     if score_mode not in set(get_score_mode_values()):
         raise ValueError("Invalid score mode.")
+
+    postprocess_mode = form_values["postprocess_mode"]
+    if postprocess_mode not in {"none", "coherence_basic", "coherence_edge_aware"}:
+        raise ValueError("Invalid postprocess mode.")
 
     frame_prefix = validate_safe_name(form_values["frame_prefix"], "Frame prefix")
     gif_output_name = validate_safe_name(form_values["gif_output_name"], "GIF output name")
@@ -455,6 +487,7 @@ def build_config_from_request() -> tuple[dict, dict, str | None]:
         "frame_prefix": frame_prefix,
         "reconstruction_mode": reconstruction_mode,
         "score_mode": score_mode,
+        "postprocess_mode": postprocess_mode,
         "random_seed": random_seed,
         "selected_preset": form_values["selected_preset"] or None,
     }
@@ -560,6 +593,7 @@ def serialize_update(update: dict) -> dict:
         "palette_size": update.get("palette_size"),
         "reconstruction_mode": update.get("reconstruction_mode"),
         "score_mode": update.get("score_mode"),
+        "postprocess_mode": update.get("postprocess_mode"),
         "frame_urls": frame_urls,
         "gif_url": gif_url,
         "first_frame_seconds": first_frame_seconds,
@@ -622,6 +656,7 @@ def form_page():
         palette_preset_options=build_palette_preset_display_options(),
         reconstruction_modes=RECONSTRUCTION_MODES,
         score_mode_options=build_score_mode_options(),
+        postprocess_mode_options=build_postprocess_mode_options(),
     )
 
 
@@ -660,6 +695,7 @@ def start_run():
                 defaults["reconstruction_mode"],
             ),
             "score_mode": request.form.get("score_mode", defaults["score_mode"]),
+            "postprocess_mode": request.form.get("postprocess_mode", defaults["postprocess_mode"]),
             "random_seed": request.form.get("random_seed", defaults["random_seed"]),
             "create_gif": "create_gif" in request.form,
             "gif_frame_duration_ms": request.form.get(
@@ -694,6 +730,7 @@ def start_run():
             palette_preset_options=build_palette_preset_display_options(),
             reconstruction_modes=RECONSTRUCTION_MODES,
             score_mode_options=build_score_mode_options(),
+            postprocess_mode_options=build_postprocess_mode_options(),
         ), 400
 
 
@@ -751,6 +788,7 @@ def run_status(job_id: str):
             "average_frame_text": None,
             "estimated_remaining_seconds": None,
             "estimated_remaining_text": None,
+            "postprocess_mode": None,
         })
 
     payload = serialize_update(update)

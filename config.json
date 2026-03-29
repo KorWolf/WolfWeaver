@@ -16,6 +16,7 @@
     "reconstruction_mode": "scanline",
 
     "score_mode": "accent_aware",
+    "postprocess_mode": "none",
 
     "random_seed": 42
 }
